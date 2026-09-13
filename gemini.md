@@ -42,7 +42,7 @@ This document serves as the foundational source of truth for design, styling, ar
 ### 1.6 Atomic Design & Component Reusability
 - **Small & Reusable Components**: Break UI elements down into small, modular, single-responsibility components. Componentize any visual or functional element that repeats.
 - **Atomic Hierarchy**:
-  - **Atoms**: Base primitives (e.g., `Button`, `Badge`, `SeverityPill`, `Input`, `CodeSnippet`, `StatusDot`).
+  - **Atoms**: Base primitives (e.g., `Button`, `Badge`, `SeverityPill`, `Input`, `CodeBlock`, `Logo`, `Spinner`).
   - **Molecules**: Compound units combining atoms (e.g., `SearchBar`, `MetricStatCard`, `SeverityFilterGroup`, `RepoInputForm`, `TerminalWindow`).
   - **Organisms**: Complex sections (e.g., `FindingsTable`, `ScanProgressPanel`, `VulnerabilityDetailDrawer`, `CodeViewer`).
 - **Pre-Creation Verification Requirement**: Before authoring any new markup or UI feature, inspect existing component folders (`frontend/src/components/`) to check if a component already exists or can be cleanly extended with props. Never duplicate repeated JSX, styling, or badge logic inline.

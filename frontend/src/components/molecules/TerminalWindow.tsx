@@ -51,7 +51,7 @@ export const TerminalWindow: FC<TerminalWindowProps> = ({
       </div>
 
       {/* Terminal Body */}
-      <div className="p-4 text-[12px] leading-relaxed text-zinc-300 overflow-x-auto">
+      <div className="p-4 text-[12px] leading-relaxed text-zinc-300 overflow-x-auto no-scrollbar">
         {children}
       </div>
     </div>

@@ -1,20 +1,64 @@
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: vulnscan-db
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vulnscan}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vulnscan_password}
+      POSTGRES_DB: ${POSTGRES_DB:-vulnscan_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-vulnscan} -d $${POSTGRES_DB:-vulnscan_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vulnscan-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: vulnscan-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - vulnscan-network
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: vulnscan-backend
+    restart: unless-stopped
     ports:
       - "${PORT:-4000}:4000"
     environment:
       - PORT=4000
-      - NODE_ENV=${NODE_ENV:-development}
+      - NODE_ENV=${NODE_ENV:-production}
       - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:5173}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://vulnscan:vulnscan_password@db:5432/vulnscan_db?schema=public}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - JWT_SECRET=${JWT_SECRET:-vulnscan_dev_jwt_secret_change_in_production_key_12345}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - WORKSPACE_DIR=/app/tmp/scans
     volumes:
       - scan_cache:/app/tmp/scans
-    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - vulnscan-network
 
@@ -23,17 +67,21 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: vulnscan-frontend
+    restart: unless-stopped
     ports:
       - "5173:80"
     environment:
       - VITE_API_BASE_URL=http://localhost:4000
     depends_on:
       - backend
-    restart: unless-stopped
     networks:
       - vulnscan-network
 
 volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
   scan_cache:
     driver: local
 

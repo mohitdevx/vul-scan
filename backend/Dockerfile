@@ -6,7 +6,9 @@ RUN apk add --no-cache git
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 COPY package.json ./
+COPY prisma ./prisma
 RUN pnpm install
+RUN pnpm prisma generate
 
 COPY tsconfig.json ./
 COPY src ./src
@@ -23,7 +25,9 @@ ENV NODE_ENV=production
 ENV PORT=4000
 
 COPY package.json ./
+COPY prisma ./prisma
 RUN pnpm install --prod
+RUN pnpm prisma generate
 
 COPY --from=builder /app/dist ./dist
 

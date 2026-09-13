@@ -8,4 +8,9 @@ export const logger = {
   error: (message: string, ...args: unknown[]) => {
     console.error(`[ERROR] [${new Date().toISOString()}] ${message}`, ...args)
   },
+  debug: (message: string, ...args: unknown[]) => {
+    if (process.env.DEBUG) {
+      console.debug(`[DEBUG] [${new Date().toISOString()}] ${message}`, ...args)
+    }
+  },
 }

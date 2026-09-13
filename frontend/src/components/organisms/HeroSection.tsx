@@ -1,14 +1,14 @@
 import { useState, type FC } from 'react'
 import {
-  RiGitBranchLine,
   RiArrowRightLine,
+  RiGithubLine,
 } from '@remixicon/react'
 import { Button } from '../atoms/Button'
 import { Input } from '../atoms/Input'
 import { TerminalWindow } from '../molecules/TerminalWindow'
 
 interface HeroSectionProps {
-  onGetStarted: () => void
+  onGetStarted: (repoUrl?: string) => void
   onExplore: () => void
 }
 
@@ -20,7 +20,7 @@ export const HeroSection: FC<HeroSectionProps> = ({
 
   const handleQuickScan = (e: React.FormEvent) => {
     e.preventDefault()
-    onGetStarted()
+    onGetStarted(repoUrl.trim())
   }
 
   return (
@@ -37,7 +37,7 @@ export const HeroSection: FC<HeroSectionProps> = ({
             API authentication flows, and session management vulnerabilities.
           </p>
 
-          {/* Clean repository input box */}
+          {/* High-impact repository scan input box */}
           <form
             onSubmit={handleQuickScan}
             className="max-w-lg mx-auto flex flex-col sm:flex-row items-center gap-2 mb-10"
@@ -48,7 +48,7 @@ export const HeroSection: FC<HeroSectionProps> = ({
                 placeholder="https://github.com/owner/repository"
                 value={repoUrl}
                 onChange={e => setRepoUrl(e.target.value)}
-                icon={<RiGitBranchLine className="w-4 h-4" />}
+                icon={<RiGithubLine className="w-4 h-4 text-zinc-500" />}
               />
             </div>
             <Button

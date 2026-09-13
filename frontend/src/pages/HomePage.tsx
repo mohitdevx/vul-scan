@@ -7,9 +7,14 @@ import { Footer } from '../components/organisms/Footer'
 interface HomePageProps {
   onOpenAuth: (mode: 'login' | 'signup') => void
   onNavigate: (view: 'home' | 'dashboard') => void
+  onStartScan: (repoUrl?: string) => void
 }
 
-export const HomePage: React.FC<HomePageProps> = ({ onOpenAuth, onNavigate }) => {
+export const HomePage: React.FC<HomePageProps> = ({
+  onOpenAuth,
+  onNavigate,
+  onStartScan,
+}) => {
   const handleScrollToCapabilities = () => {
     const el = document.getElementById('analyzers')
     if (el) {
@@ -26,7 +31,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onOpenAuth, onNavigate }) =>
       />
       <main className="flex-1">
         <HeroSection
-          onGetStarted={() => onOpenAuth('signup')}
+          onGetStarted={onStartScan}
           onExplore={handleScrollToCapabilities}
         />
         <FeaturesSection />

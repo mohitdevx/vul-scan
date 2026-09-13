@@ -1,5 +1,5 @@
 const API_BASE =
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'
+  import.meta.env.VITE_API_BASE_URL || ''
 
 export interface User {
   id: string
@@ -28,6 +28,63 @@ export interface SignupPayload {
 export interface LoginPayload {
   email: string
   password: string
+}
+
+export interface FindingItem {
+  id: string
+  ruleId: string
+  ruleName: string
+  cwe: string
+  severity: 'HIGH' | 'MEDIUM' | 'LOW'
+  filePath: string
+  line: number
+  column: number
+  snippet: string
+  sink: string
+  message: string
+  remediation: string
+}
+
+export interface ScanItem {
+  id: string
+  repoUrl: string
+  repoName: string
+  branch: string
+  status: 'pending' | 'scanning' | 'completed' | 'failed'
+  findingsCount: number
+  highCount: number
+  mediumCount: number
+  lowCount: number
+  durationMs: number
+  createdAt: string
+  completedAt?: string
+  findings?: FindingItem[]
+}
+
+export interface RepositoryItem {
+  id: string
+  name: string
+  url: string
+  defaultBranch: string
+  createdAt: string
+  updatedAt: string
+  latestScan?: {
+    id: string
+    status: string
+    findingsCount: number
+    highCount: number
+    mediumCount: number
+    createdAt: string
+  } | null
+}
+
+export interface DashboardStats {
+  totalRepositories: number
+  totalScans: number
+  totalFindings: number
+  highSeverity: number
+  mediumSeverity: number
+  cleanScans: number
 }
 
 class ApiError extends Error {
@@ -92,4 +149,38 @@ export const authApi = {
     request<{ message: string }>('/api/auth/logout', {
       method: 'POST',
     }),
+}
+
+export const repositoryApi = {
+  list: () => request<{ repositories: RepositoryItem[] }>('/api/repositories'),
+
+  add: (payload: { url: string; name?: string; defaultBranch?: string }) =>
+    request<{ message: string; repository: RepositoryItem }>('/api/repositories', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  delete: (id: string) =>
+    request<{ message: string; id: string }>(`/api/repositories/${id}`, {
+      method: 'DELETE',
+    }),
+}
+
+export const scanApi = {
+  trigger: (payload: { repoUrl: string; branch?: string }) =>
+    request<{ message: string; scan: ScanItem }>('/api/scan', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  list: () => request<{ scans: ScanItem[] }>('/api/scan'),
+
+  getById: (id: string) => request<{ scan: ScanItem }>(`/api/scan/${id}`),
+
+  getStats: () => request<{ stats: DashboardStats }>('/api/scan/stats'),
+
+  getBranches: (url: string) =>
+    request<{ branches: string[]; defaultBranch: string }>(
+      `/api/scan/branches?url=${encodeURIComponent(url)}`
+    ),
 }

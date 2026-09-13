@@ -8,25 +8,53 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  firstName String
-  lastName  String
-  orgName   String
-  email     String   @unique
-  password  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String       @id @default(cuid())
+  firstName    String
+  lastName     String
+  orgName      String
+  email        String       @unique
+  password     String
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 
-  scans     Scan[]
+  repositories Repository[]
+  scans        Scan[]
+}
+
+model Repository {
+  id            String   @id @default(cuid())
+  name          String
+  url           String
+  defaultBranch String   @default("main")
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  scans         Scan[]
+
+  @@unique([userId, url])
 }
 
 model Scan {
-  id          String    @id @default(cuid())
-  repoUrl     String
-  branch      String?
-  status      String    @default("pending")
-  userId      String?
-  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
-  createdAt   DateTime  @default(now())
-  completedAt DateTime?
+  id            String      @id @default(cuid())
+  repoUrl       String
+  repoName      String?
+  branch        String      @default("main")
+  status        String      @default("completed")
+  findingsCount Int         @default(0)
+  highCount     Int         @default(0)
+  mediumCount   Int         @default(0)
+  lowCount      Int         @default(0)
+  durationMs    Int         @default(140)
+  findingsJson  String?
+
+  repositoryId  String?
+  repository    Repository? @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
+
+  userId        String?
+  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt     DateTime    @default(now())
+  completedAt   DateTime?
 }

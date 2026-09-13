@@ -1,8 +1,10 @@
 import express from 'express'
 import cors from 'cors'
+import cookieParser from 'cookie-parser'
 import { config } from './config/env.js'
 import { healthRouter } from './routes/health.routes.js'
 import { scanRouter } from './routes/scan.routes.js'
+import { authRouter } from './routes/auth.routes.js'
 import { errorHandler } from './middlewares/error.middleware.js'
 import { logger } from './utils/logger.js'
 
@@ -15,9 +17,11 @@ app.use(
   })
 )
 app.use(express.json())
+app.use(cookieParser())
 
 // Application routes
 app.use('/api/health', healthRouter)
+app.use('/api/auth', authRouter)
 app.use('/api/scan', scanRouter)
 
 // Error handling middleware

@@ -1,0 +1,42 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vulnscan-backend
+    ports:
+      - "${PORT:-4000}:4000"
+    environment:
+      - PORT=4000
+      - NODE_ENV=${NODE_ENV:-development}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:5173}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - WORKSPACE_DIR=/app/tmp/scans
+    volumes:
+      - scan_cache:/app/tmp/scans
+    restart: unless-stopped
+    networks:
+      - vulnscan-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: vulnscan-frontend
+    ports:
+      - "5173:80"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:4000
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - vulnscan-network
+
+volumes:
+  scan_cache:
+    driver: local
+
+networks:
+  vulnscan-network:
+    driver: bridge

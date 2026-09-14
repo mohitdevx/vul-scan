@@ -22,9 +22,12 @@ export interface EngineContext {
 }
 
 export interface SecurityEngine {
+  id: string
   name: string
   ruleId: string
   cwe: string
+  version?: string
+  enabled?: boolean
   analyze: (ast: any, ctx: EngineContext) => Finding[]
 }
 

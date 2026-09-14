@@ -1,250 +1,244 @@
-import { type FC } from 'react'
+import { useState, useCallback } from 'react'
+import { RiFileCopyLine, RiCheckLine, RiCodeLine } from '@remixicon/react'
 
 interface CodeBlockProps {
   code: string
-  highlightToken?: string
-  highlightType?: 'unsafe' | 'safe'
-  showLineNumbers?: boolean
+  language?: string
+  highlightLine?: number
+  startLineNumber?: number
   startLine?: number
+  highlightToken?: string
+  highlightType?: 'unsafe' | 'safe' | string
+  filePath?: string
   className?: string
+  variant?: 'minimal' | 'bordered'
 }
 
-// Token types for syntax highlighting
-type TokenType =
-  | 'comment'
-  | 'string'
-  | 'keyword'
-  | 'boolean'
-  | 'number'
-  | 'function'
-  | 'property'
-  | 'punctuation'
-  | 'text'
-
-interface Token {
-  type: TokenType
-  content: string
-}
-
-const KEYWORDS = new Set([
+const JS_KEYWORDS = new Set([
   'const',
   'let',
   'var',
   'function',
   'return',
-  'import',
-  'from',
-  'export',
-  'default',
-  'class',
-  'new',
-  'async',
-  'await',
   'if',
   'else',
+  'for',
+  'while',
+  'async',
+  'await',
+  'import',
+  'export',
+  'from',
+  'default',
+  'class',
+  'extends',
+  'new',
+  'this',
+  'try',
+  'catch',
+  'finally',
+  'throw',
+  'typeof',
+  'instanceof',
+  'type',
+  'interface',
 ])
 
-function tokenizeLine(line: string): Token[] {
-  const tokens: Token[] = []
-  let i = 0
+const JS_LITERALS = new Set(['true', 'false', 'null', 'undefined'])
 
-  while (i < line.length) {
-    // Single line comments
-    if (line[i] === '/' && line[i + 1] === '/') {
-      tokens.push({ type: 'comment', content: line.slice(i) })
-      break
-    }
+/**
+ * Deterministic syntax tokenizer for JS/TS/JSX
+ */
+function highlightJsLine(line: string, highlightToken?: string, highlightType?: string) {
+  // Check for line comment first
+  const commentIdx = line.indexOf('//')
+  let mainCode = line
+  let commentPart = ''
 
-    // Strings: single, double, backtick
-    if (line[i] === '"' || line[i] === "'" || line[i] === '`') {
-      const quote = line[i]
-      let str = quote
-      i++
-      while (i < line.length) {
-        str += line[i]
-        if (line[i] === quote && line[i - 1] !== '\\') {
-          i++
-          break
-        }
-        i++
-      }
-      tokens.push({ type: 'string', content: str })
-      continue
-    }
-
-    // Word tokens: keywords, booleans, functions, properties, identifiers
-    if (/[a-zA-Z_$]/.test(line[i])) {
-      let word = ''
-      while (i < line.length && /[a-zA-Z0-9_$]/.test(line[i])) {
-        word += line[i]
-        i++
-      }
-
-      if (KEYWORDS.has(word)) {
-        tokens.push({ type: 'keyword', content: word })
-      } else if (word === 'true' || word === 'false' || word === 'null' || word === 'undefined') {
-        tokens.push({ type: 'boolean', content: word })
-      } else if (i < line.length && line[i] === '(') {
-        tokens.push({ type: 'function', content: word })
-      } else if (tokens.length > 0 && tokens[tokens.length - 1].content === '.') {
-        tokens.push({ type: 'property', content: word })
-      } else {
-        tokens.push({ type: 'text', content: word })
-      }
-      continue
-    }
-
-    // Numbers
-    if (/[0-9]/.test(line[i])) {
-      let num = ''
-      while (i < line.length && /[0-9]/.test(line[i])) {
-        num += line[i]
-        i++
-      }
-      tokens.push({ type: 'number', content: num })
-      continue
-    }
-
-    // Operators and punctuation
-    if (/[{}()[\].,;:+=*&|^!<>?-]/.test(line[i])) {
-      tokens.push({ type: 'punctuation', content: line[i] })
-      i++
-      continue
-    }
-
-    // Whitespace / other
-    let space = ''
-    while (i < line.length && /\s/.test(line[i])) {
-      space += line[i]
-      i++
-    }
-    if (space) {
-      tokens.push({ type: 'text', content: space })
-    } else {
-      tokens.push({ type: 'text', content: line[i] })
-      i++
+  if (commentIdx !== -1) {
+    const before = line.slice(0, commentIdx)
+    const singleQuotes = (before.match(/'/g) || []).length
+    const doubleQuotes = (before.match(/"/g) || []).length
+    const backticks = (before.match(/`/g) || []).length
+    if (singleQuotes % 2 === 0 && doubleQuotes % 2 === 0 && backticks % 2 === 0) {
+      mainCode = line.slice(0, commentIdx)
+      commentPart = line.slice(commentIdx)
     }
   }
 
-  return tokens
-}
+  const regex = /(`(?:\\`|[^`])*`|"(?:\\"|[^"])*"|'(?:\\'|[^'])*'|\b\w+\b|[<>&=+\-*/:;,.(){}[\]])/g
 
-export const CodeBlock: FC<CodeBlockProps> = ({
-  code,
-  highlightToken,
-  highlightType = 'unsafe',
-  showLineNumbers = true,
-  startLine = 1,
-  className = '',
-}) => {
-  const lines = code.trim().split('\n')
+  const tokens: { text: string; type: 'keyword' | 'literal' | 'string' | 'token-highlight' | 'sink' | 'normal' }[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
 
-  const renderToken = (token: Token, idx: number) => {
-    switch (token.type) {
-      case 'comment':
-        return (
-          <span key={idx} className="text-zinc-500 italic">
-            {token.content}
-          </span>
-        )
-      case 'string':
-        return (
-          <span key={idx} className="text-emerald-300">
-            {token.content}
-          </span>
-        )
-      case 'keyword':
-        return (
-          <span key={idx} className="text-purple-400 font-semibold">
-            {token.content}
-          </span>
-        )
-      case 'boolean':
-      case 'number':
-        return (
-          <span key={idx} className="text-amber-300">
-            {token.content}
-          </span>
-        )
-      case 'function':
-        return (
-          <span key={idx} className="text-sky-300">
-            {token.content}
-          </span>
-        )
-      case 'property':
-        return (
-          <span key={idx} className="text-cyan-200">
-            {token.content}
-          </span>
-        )
-      case 'punctuation':
-        return (
-          <span key={idx} className="text-zinc-400">
-            {token.content}
-          </span>
-        )
-      default:
-        return (
-          <span key={idx} className="text-zinc-200">
-            {token.content}
-          </span>
-        )
+  while ((match = regex.exec(mainCode)) !== null) {
+    if (match.index > lastIndex) {
+      tokens.push({ text: mainCode.slice(lastIndex, match.index), type: 'normal' })
     }
+
+    const val = match[0]
+
+    if (highlightToken && (val === highlightToken || val.includes(highlightToken))) {
+      tokens.push({ text: val, type: 'token-highlight' })
+    } else if (val.startsWith('"') || val.startsWith("'") || val.startsWith('`')) {
+      tokens.push({ text: val, type: 'string' })
+    } else if (JS_KEYWORDS.has(val)) {
+      tokens.push({ text: val, type: 'keyword' })
+    } else if (JS_LITERALS.has(val) || /^\d+$/.test(val)) {
+      tokens.push({ text: val, type: 'literal' })
+    } else if (
+      val === 'innerHTML' ||
+      val === 'outerHTML' ||
+      val === 'eval' ||
+      val === 'dangerouslySetInnerHTML' ||
+      val === 'document' ||
+      val === 'write' ||
+      val === 'writeln'
+    ) {
+      tokens.push({ text: val, type: 'sink' })
+    } else {
+      tokens.push({ text: val, type: 'normal' })
+    }
+
+    lastIndex = regex.lastIndex
+  }
+
+  if (lastIndex < mainCode.length) {
+    tokens.push({ text: mainCode.slice(lastIndex), type: 'normal' })
   }
 
   return (
-    <div
-      className={`rounded-lg bg-[#070709] border border-zinc-850 py-2.5 px-3.5 font-mono text-[12px] leading-relaxed overflow-hidden no-scrollbar select-text ${className}`}
-    >
-      <div className="space-y-1">
-        {lines.map((lineText, lineIdx) => {
-          const lineNum = startLine + lineIdx
-          const hasHighlight = highlightToken && lineText.includes(highlightToken)
-
-          if (hasHighlight && highlightToken) {
-            const parts = lineText.split(highlightToken)
+    <>
+      {tokens.map((tok, i) => {
+        switch (tok.type) {
+          case 'token-highlight':
             return (
-              <div key={lineIdx} className="flex items-start gap-3">
-                {showLineNumbers && (
-                  <span className="text-zinc-600 text-[11px] select-none shrink-0 w-5 text-right font-mono">
-                    {lineNum}
-                  </span>
-                )}
-                <div className="flex-1 whitespace-pre">
-                  {tokenizeLine(parts[0]).map((tok, i) => renderToken(tok, i))}
-                  <span
-                    className={
-                      highlightType === 'unsafe'
-                        ? 'bg-rose-500/20 text-rose-300 px-1 py-0.5 rounded border border-rose-500/40 font-semibold'
-                        : 'bg-emerald-500/20 text-emerald-300 px-1 py-0.5 rounded border border-emerald-500/40 font-semibold'
-                    }
-                  >
-                    {highlightToken}
-                  </span>
-                  {parts[1] &&
-                    tokenizeLine(parts[1]).map((tok, i) =>
-                      renderToken(tok, i + 100)
-                    )}
-                </div>
-              </div>
+              <span
+                key={i}
+                className={`font-semibold px-1 py-0.5 rounded ${
+                  highlightType === 'safe'
+                    ? 'text-emerald-300 bg-emerald-500/20'
+                    : 'text-rose-300 bg-rose-500/20'
+                }`}
+              >
+                {tok.text}
+              </span>
             )
-          }
+          case 'keyword':
+            return <span key={i} className="text-[#c792ea]">{tok.text}</span>
+          case 'string':
+            return <span key={i} className="text-[#c3e88d]">{tok.text}</span>
+          case 'literal':
+            return <span key={i} className="text-[#f78c6c]">{tok.text}</span>
+          case 'sink':
+            return <span key={i} className="text-[#ff5370] font-semibold underline decoration-[#ff5370]/50">{tok.text}</span>
+          default:
+            return <span key={i} className="text-zinc-300">{tok.text}</span>
+        }
+      })}
+      {commentPart && <span className="text-zinc-600 italic">{commentPart}</span>}
+    </>
+  )
+}
 
-          const tokens = tokenizeLine(lineText)
-          return (
-            <div key={lineIdx} className="flex items-start gap-3">
-              {showLineNumbers && (
-                <span className="text-zinc-600 text-[11px] select-none shrink-0 w-5 text-right font-mono">
-                  {lineNum}
-                </span>
-              )}
-              <div className="flex-1 whitespace-pre">
-                {tokens.map((tok, i) => renderToken(tok, i))}
-              </div>
-            </div>
-          )
-        })}
+export function CodeBlock({
+  code,
+  language = 'javascript',
+  highlightLine,
+  startLineNumber,
+  startLine = 1,
+  highlightToken,
+  highlightType,
+  filePath,
+  className = '',
+  variant = 'minimal',
+}: CodeBlockProps) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = useCallback(() => {
+    if (!code) return
+    navigator.clipboard.writeText(code)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }, [code])
+
+  const effectiveStart = startLineNumber !== undefined ? startLineNumber : startLine
+  const rawLines = code.split('\n')
+
+  const containerStyles =
+    variant === 'minimal'
+      ? 'bg-[#0d0e12] rounded-lg'
+      : 'rounded-xl border border-zinc-800 bg-[#09090c]'
+
+  return (
+    <div className={`relative overflow-hidden text-xs font-mono ${containerStyles} ${className}`}>
+      {/* Top Header Bar */}
+      <div className="flex items-center justify-between px-4 py-2 text-zinc-400">
+        <div className="flex items-center gap-2">
+          <RiCodeLine className="w-3.5 h-3.5 text-zinc-600" />
+          <span className="text-[11px] text-zinc-400 font-mono tracking-tight truncate max-w-sm">
+            {filePath || language}
+          </span>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="inline-flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer"
+          title="Copy snippet"
+        >
+          {copied ? (
+            <>
+              <RiCheckLine className="w-3 h-3 text-emerald-400" />
+              <span className="text-emerald-400">Copied</span>
+            </>
+          ) : (
+            <>
+              <RiFileCopyLine className="w-3 h-3" />
+              <span>Copy</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Code Lines with line numbers */}
+      <div className="overflow-x-auto px-4 pb-3 pt-1 leading-relaxed selection:bg-red-500/20">
+        <table className="w-full border-collapse">
+          <tbody>
+            {rawLines.map((lineText, idx) => {
+              const currentLineNum = effectiveStart + idx
+              const isFlagged = highlightLine !== undefined && currentLineNum === highlightLine
+
+              return (
+                <tr
+                  key={idx}
+                  className={`transition-colors ${
+                    isFlagged
+                      ? 'bg-rose-500/[0.08] border-l-2 border-rose-500'
+                      : 'hover:bg-white/[0.02]'
+                  }`}
+                >
+                  {/* Line Number Gutter */}
+                  <td className="pr-4 pl-1 select-none text-right align-top w-10 text-[11px]">
+                    <span
+                      className={`font-mono ${
+                        isFlagged ? 'text-rose-400 font-semibold' : 'text-zinc-600'
+                      }`}
+                    >
+                      {currentLineNum}
+                    </span>
+                  </td>
+
+                  {/* Code Line Content */}
+                  <td className="whitespace-pre align-top text-zinc-300">
+                    {highlightJsLine(lineText, highlightToken, highlightType)}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   )

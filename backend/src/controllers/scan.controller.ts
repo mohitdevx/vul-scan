@@ -251,3 +251,146 @@ export async function getDashboardStats(req: Request, res: Response, next: NextF
     next(error)
   }
 }
+
+export async function deleteScan(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id
+    const { id } = req.params
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const scan = await prisma.scan.findFirst({
+      where: { id, userId },
+    })
+
+    if (!scan) {
+      res.status(404).json({ error: 'Scan not found' })
+      return
+    }
+
+    await prisma.scan.delete({
+      where: { id },
+    })
+
+    res.json({ message: 'Scan deleted successfully', id })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function deleteAllScans(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const result = await prisma.scan.deleteMany({
+      where: { userId },
+    })
+
+    res.json({
+      message: 'All scan history deleted successfully',
+      deletedCount: result.count,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function deleteFinding(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id
+    const { id, findingId } = req.params
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const scan = await prisma.scan.findFirst({
+      where: { id, userId },
+    })
+
+    if (!scan) {
+      res.status(404).json({ error: 'Scan not found' })
+      return
+    }
+
+    let findings: any[] = []
+    if (scan.findingsJson) {
+      try {
+        findings = JSON.parse(scan.findingsJson)
+      } catch {
+        findings = []
+      }
+    }
+
+    // Remove the specified finding
+    const updatedFindings = findings.filter(f => f.id !== findingId)
+    const highCount = updatedFindings.filter(f => f.severity === 'HIGH' || f.severity === 'CRITICAL').length
+    const mediumCount = updatedFindings.filter(f => f.severity === 'MEDIUM').length
+    const lowCount = updatedFindings.filter(f => f.severity === 'LOW').length
+
+    const updatedScan = await prisma.scan.update({
+      where: { id },
+      data: {
+        findingsCount: updatedFindings.length,
+        highCount,
+        mediumCount,
+        lowCount,
+        findingsJson: JSON.stringify(updatedFindings),
+      },
+    })
+
+    res.json({
+      message: 'Finding deleted successfully',
+      scan: {
+        ...updatedScan,
+        findings: updatedFindings,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function getRepoScans(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id
+    const repoUrl = String(req.query.repoUrl || '').trim()
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const scans = await prisma.scan.findMany({
+      where: {
+        userId,
+        ...(repoUrl ? { repoUrl } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+
+    const formatted = scans.map(s => {
+      let findings = []
+      if (s.findingsJson) {
+        try {
+          findings = JSON.parse(s.findingsJson)
+        } catch {
+          findings = []
+        }
+      }
+      return {
+        ...s,
+        findings,
+      }
+    })
+
+    res.json({ scans: formatted })
+  } catch (error) {
+    next(error)
+  }
+}

@@ -35,7 +35,7 @@ export interface FindingItem {
   ruleId: string
   ruleName: string
   cwe: string
-  severity: 'HIGH' | 'MEDIUM' | 'LOW'
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
   filePath: string
   line: number
   column: number
@@ -182,5 +182,25 @@ export const scanApi = {
   getBranches: (url: string) =>
     request<{ branches: string[]; defaultBranch: string }>(
       `/api/scan/branches?url=${encodeURIComponent(url)}`
+    ),
+
+  delete: (id: string) =>
+    request<{ message: string; id: string }>(`/api/scan/${id}`, {
+      method: 'DELETE',
+    }),
+
+  deleteAll: () =>
+    request<{ message: string; deletedCount: number }>('/api/scan', {
+      method: 'DELETE',
+    }),
+
+  deleteFinding: (scanId: string, findingId: string) =>
+    request<{ message: string; scan: ScanItem }>(`/api/scan/${scanId}/findings/${findingId}`, {
+      method: 'DELETE',
+    }),
+
+  getRepoScans: (repoUrl?: string) =>
+    request<{ scans: ScanItem[] }>(
+      `/api/scan/repo-scans${repoUrl ? `?repoUrl=${encodeURIComponent(repoUrl)}` : ''}`
     ),
 }

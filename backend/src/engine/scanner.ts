@@ -4,9 +4,7 @@ import os from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { parseSourceCode } from './parser.js'
-import { xssEngine } from './xssEngine.js'
-import { sqliEngine } from './sqliEngine.js'
-import { cmdiEngine } from './cmdiEngine.js'
+import { masterEngine } from './masterEngine.js'
 import type { Finding, ScanResult, EngineContext } from './types.js'
 import { logger } from '../utils/logger.js'
 
@@ -126,8 +124,6 @@ export async function runSecurityScan(repoUrl: string, branch: string = 'main'):
     const allFindings: Finding[] = []
     let scannedFilesCount = 0
 
-    const engines = [xssEngine, sqliEngine, cmdiEngine]
-
     for (const filePath of targetFiles) {
       scannedFilesCount++
       const relPath = path.relative(tmpDir, filePath)
@@ -145,10 +141,8 @@ export async function runSecurityScan(repoUrl: string, branch: string = 'main'):
           lines,
         }
 
-        for (const engine of engines) {
-          const findings = engine.analyze(ast, ctx)
-          allFindings.push(...findings)
-        }
+        const findings = masterEngine.analyze(ast, ctx)
+        allFindings.push(...findings)
       } catch (err: any) {
         logger.debug(`Error analyzing file ${relPath}: ${err.message}`)
       }

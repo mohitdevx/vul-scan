@@ -15,6 +15,7 @@ export interface BranchSelectProps {
   onChange: (branch: string) => void
   disabled?: boolean
   className?: string
+  variant?: 'default' | 'seamless'
 }
 
 function isValidGitUrl(url: string): boolean {
@@ -37,6 +38,7 @@ export const BranchSelect: React.FC<BranchSelectProps> = ({
   onChange,
   disabled = false,
   className = '',
+  variant = 'default',
 }) => {
   const [branches, setBranches] = useState<string[]>([])
   const [defaultBranch, setDefaultBranch] = useState<string>('main')
@@ -126,6 +128,24 @@ export const BranchSelect: React.FC<BranchSelectProps> = ({
   const hasSyncedBranches = branches.length > 0
   const isTriggerDisabled = disabled || isLoading || (!hasSyncedBranches && !repoUrl.trim())
 
+  const triggerClass =
+    variant === 'seamless'
+      ? `w-full h-9 px-3 rounded-lg flex items-center justify-between text-xs font-mono transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 ${
+          isOpen
+            ? 'bg-zinc-800 text-zinc-100'
+            : 'bg-zinc-800/40 hover:bg-zinc-800 text-zinc-300'
+        }`
+      : `w-full h-10 px-3 py-2 rounded-md bg-zinc-900/90 border flex items-center justify-between text-xs font-mono transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
+          isOpen
+            ? 'border-zinc-500 ring-1 ring-zinc-500/20 text-zinc-100'
+            : 'border-zinc-800 hover:border-zinc-700 text-zinc-300'
+        }`
+
+  const popoverClass =
+    variant === 'seamless'
+      ? 'absolute top-full mt-2 left-0 right-0 sm:w-64 sm:right-auto z-50 rounded-xl bg-[#121216] shadow-2xl shadow-black ring-1 ring-white/10 overflow-hidden animate-in fade-in duration-100'
+      : 'absolute top-full mt-1.5 left-0 right-0 z-50 rounded-lg border border-zinc-800 bg-[#101014] shadow-2xl shadow-black overflow-hidden animate-in fade-in duration-100'
+
   return (
     <div ref={containerRef} className={`relative select-none ${className}`}>
       {/* Dropdown Trigger Button */}
@@ -138,18 +158,14 @@ export const BranchSelect: React.FC<BranchSelectProps> = ({
             setSearchFilter('')
           }
         }}
-        className={`w-full h-10 px-3 py-2 rounded-md bg-zinc-900/90 border flex items-center justify-between text-xs font-mono transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
-          isOpen
-            ? 'border-zinc-500 ring-1 ring-zinc-500/20 text-zinc-100'
-            : 'border-zinc-800 hover:border-zinc-700 text-zinc-300'
-        }`}
+        className={triggerClass}
       >
         <div className="flex items-center gap-2 min-w-0 pr-2">
           <RiGitBranchLine className="w-4 h-4 text-zinc-500 shrink-0" />
           {isLoading ? (
             <div className="flex items-center gap-2 text-zinc-400">
               <Spinner size="sm" />
-              <span className="truncate">Syncing branches...</span>
+              <span className="truncate">Syncing...</span>
             </div>
           ) : hasSyncedBranches ? (
             <div className="flex items-center gap-1.5 truncate">
@@ -157,15 +173,15 @@ export const BranchSelect: React.FC<BranchSelectProps> = ({
                 {value || defaultBranch}
               </span>
               {(value === defaultBranch || (!value && defaultBranch)) && (
-                <span className="text-[9.5px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
+                <span className="text-[9.5px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400">
                   default
                 </span>
               )}
             </div>
           ) : repoUrl.trim() ? (
-            <span className="text-zinc-500 italic truncate">Syncing with repo...</span>
+            <span className="text-zinc-500 italic truncate">Syncing...</span>
           ) : (
-            <span className="text-zinc-600 truncate">Branch (auto-sync)</span>
+            <span className="text-zinc-500 truncate">Branch</span>
           )}
         </div>
 
@@ -190,7 +206,7 @@ export const BranchSelect: React.FC<BranchSelectProps> = ({
 
       {/* Popover Dropdown Menu */}
       {isOpen && hasSyncedBranches && (
-        <div className="absolute top-full mt-1.5 left-0 right-0 z-50 rounded-lg border border-zinc-800 bg-[#101014] shadow-2xl shadow-black overflow-hidden animate-in fade-in duration-100">
+        <div className={popoverClass}>
           {/* Quick Search if multiple branches */}
           {branches.length > 5 && (
             <div className="p-2 border-b border-zinc-850 bg-zinc-950/60">

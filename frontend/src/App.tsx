@@ -1,16 +1,28 @@
 import { useState, useEffect, useCallback } from 'react'
 import { ToastProvider } from './context/ToastContext'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { ConfirmProvider } from './context/ConfirmContext'
 import { HomePage } from './pages/HomePage'
 import { DashboardPage } from './pages/DashboardPage'
+import { ReportPage } from './pages/ReportPage'
 import { AuthModal } from './components/organisms/AuthModal'
 
 function AppContent() {
-  const getInitialView = (): 'home' | 'dashboard' => {
-    return window.location.pathname.startsWith('/dashboard') ? 'dashboard' : 'home'
+  const getInitialState = (): { view: 'home' | 'dashboard' | 'report'; scanId: string | null } => {
+    const path = window.location.pathname
+    if (path.startsWith('/report/')) {
+      const id = path.replace('/report/', '').trim()
+      return { view: 'report', scanId: id || null }
+    }
+    if (path.startsWith('/dashboard')) {
+      return { view: 'dashboard', scanId: null }
+    }
+    return { view: 'home', scanId: null }
   }
 
-  const [currentView, setCurrentView] = useState<'home' | 'dashboard'>(getInitialView)
+  const [initial] = useState(getInitialState)
+  const [currentView, setCurrentView] = useState<'home' | 'dashboard' | 'report'>(initial.view)
+  const [inspectingScanId, setInspectingScanId] = useState<string | null>(initial.scanId)
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login')
   const [pendingScanRepo, setPendingScanRepo] = useState<string>('')
@@ -21,8 +33,18 @@ function AppContent() {
     setAuthModalOpen(true)
   }, [])
 
-  const navigateToView = useCallback((view: 'home' | 'dashboard') => {
-    const targetPath = view === 'dashboard' ? '/dashboard' : '/'
+  const navigateToView = useCallback((view: 'home' | 'dashboard' | 'report', scanId?: string) => {
+    let targetPath = '/'
+    if (view === 'dashboard') {
+      targetPath = '/dashboard'
+      setInspectingScanId(null)
+    } else if (view === 'report' && scanId) {
+      targetPath = `/report/${scanId}`
+      setInspectingScanId(scanId)
+    } else {
+      setInspectingScanId(null)
+    }
+
     if (window.location.pathname !== targetPath) {
       window.history.pushState(null, '', targetPath)
     }
@@ -30,8 +52,8 @@ function AppContent() {
   }, [])
 
   const handleNavigate = useCallback(
-    (view: 'home' | 'dashboard') => {
-      if (view === 'dashboard' && !isAuthenticated) {
+    (view: 'home' | 'dashboard' | 'report') => {
+      if ((view === 'dashboard' || view === 'report') && !isAuthenticated) {
         handleOpenAuth('login')
         return
       }
@@ -39,6 +61,10 @@ function AppContent() {
     },
     [isAuthenticated, handleOpenAuth, navigateToView]
   )
+
+  const handleInspectScan = useCallback((scanId: string) => {
+    navigateToView('report', scanId)
+  }, [navigateToView])
 
   const handleStartScan = useCallback(
     (repoUrl?: string) => {
@@ -63,13 +89,29 @@ function AppContent() {
   // Sync browser back/forward buttons with current view
   useEffect(() => {
     const handlePopState = () => {
-      const isDash = window.location.pathname.startsWith('/dashboard')
-      if (isDash && !isAuthenticated) {
-        window.history.replaceState(null, '', '/')
-        setCurrentView('home')
-        handleOpenAuth('login')
+      const path = window.location.pathname
+      if (path.startsWith('/report/')) {
+        const id = path.replace('/report/', '').trim()
+        if (!isAuthenticated) {
+          window.history.replaceState(null, '', '/')
+          setCurrentView('home')
+          handleOpenAuth('login')
+        } else {
+          setInspectingScanId(id)
+          setCurrentView('report')
+        }
+      } else if (path.startsWith('/dashboard')) {
+        if (!isAuthenticated) {
+          window.history.replaceState(null, '', '/')
+          setCurrentView('home')
+          handleOpenAuth('login')
+        } else {
+          setInspectingScanId(null)
+          setCurrentView('dashboard')
+        }
       } else {
-        setCurrentView(isDash ? 'dashboard' : 'home')
+        setInspectingScanId(null)
+        setCurrentView('home')
       }
     }
 
@@ -77,30 +119,43 @@ function AppContent() {
     return () => window.removeEventListener('popstate', handlePopState)
   }, [isAuthenticated, handleOpenAuth])
 
-  // Guard initial route on load if opened directly at /dashboard
+  // Guard initial route on load if opened directly without authentication
   useEffect(() => {
-    if (!authLoading && window.location.pathname.startsWith('/dashboard') && !isAuthenticated) {
+    if (!authLoading && (window.location.pathname.startsWith('/dashboard') || window.location.pathname.startsWith('/report/')) && !isAuthenticated) {
       window.history.replaceState(null, '', '/')
       setCurrentView('home')
+      setInspectingScanId(null)
       handleOpenAuth('login')
     }
   }, [authLoading, isAuthenticated, handleOpenAuth])
 
   return (
     <>
-      {currentView === 'home' ? (
-        <HomePage
-          onOpenAuth={handleOpenAuth}
-          onNavigate={handleNavigate}
-          onStartScan={handleStartScan}
-        />
-      ) : (
-        <DashboardPage
-          onNavigate={handleNavigate}
-          initialScanRepo={pendingScanRepo}
-          onClearInitialScan={() => setPendingScanRepo('')}
-        />
-      )}
+      <div className="transition-opacity duration-200">
+        {currentView === 'home' && (
+          <HomePage
+            onOpenAuth={handleOpenAuth}
+            onNavigate={handleNavigate}
+            onStartScan={handleStartScan}
+          />
+        )}
+
+        {currentView === 'dashboard' && (
+          <DashboardPage
+            onNavigate={handleNavigate}
+            onInspectScan={scan => handleInspectScan(scan.id)}
+            initialScanRepo={pendingScanRepo}
+            onClearInitialScan={() => setPendingScanRepo('')}
+          />
+        )}
+
+        {currentView === 'report' && inspectingScanId && (
+          <ReportPage
+            scanId={inspectingScanId}
+            onBack={() => navigateToView('dashboard')}
+          />
+        )}
+      </div>
 
       <AuthModal
         isOpen={authModalOpen}
@@ -115,9 +170,11 @@ function AppContent() {
 export default function App() {
   return (
     <ToastProvider>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
+      <ConfirmProvider>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      </ConfirmProvider>
     </ToastProvider>
   )
 }

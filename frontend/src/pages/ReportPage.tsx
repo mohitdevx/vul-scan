@@ -6,6 +6,10 @@ import {
   RiShieldCheckLine,
   RiSearchLine,
   RiGitBranchLine,
+  RiBrainLine,
+  RiSparklingLine,
+  RiCheckDoubleLine,
+  RiRefreshLine,
 } from '@remixicon/react'
 import { scanApi, type ScanItem, type FindingItem } from '../services/api'
 import { useToast } from '../context/ToastContext'
@@ -36,7 +40,10 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
   const [allRepoScans, setAllRepoScans] = useState<ScanItem[]>([])
   const [reportMode, setReportMode] = useState<'branch' | 'full'>('branch')
   const [severityFilter, setSeverityFilter] = useState<'ALL' | 'HIGH_CRITICAL' | 'MEDIUM'>('ALL')
+  const [aiFilter, setAiFilter] = useState<'ALL' | 'CONFIRMED' | 'FALSE_POSITIVES'>('ALL')
   const [searchQuery, setSearchQuery] = useState('')
+  const [isRevalidating, setIsRevalidating] = useState(false)
+  const [aiStatus, setAiStatus] = useState<{ available: boolean; model: string } | null>(null)
 
   // Fetch scan details and sibling repository scans
   const loadReportData = useCallback(async () => {
@@ -53,6 +60,14 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
           setAllRepoScans([fetchedScan])
         }
       }
+
+      // Check AI backend status
+      try {
+        const aiInfo = await scanApi.getAiStatus()
+        setAiStatus(aiInfo)
+      } catch {
+        // AI status check non-blocking
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load report'
       error(msg, 'Error')
@@ -64,6 +79,22 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
   useEffect(() => {
     loadReportData()
   }, [loadReportData])
+
+  const handleRevalidateWithAi = async () => {
+    if (!scan?.id) return
+    setIsRevalidating(true)
+    info('Running AI security verification with Qwen 2.5 Coder 1.5B...', 'AI Triage')
+    try {
+      const res = await scanApi.revalidateWithAi(scan.id)
+      setScan(res.scan)
+      success('AI analysis completed for all findings', 'Triage Complete')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to execute AI triage'
+      error(msg, 'AI Error')
+    } finally {
+      setIsRevalidating(false)
+    }
+  }
 
   // Consolidate findings based on active mode (Branch vs Full Repo)
   const displayedFindings = useMemo<FindingWithBranch[]>(() => {
@@ -88,9 +119,16 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
     return combined
   }, [reportMode, scan, allRepoScans])
 
-  // Filter findings by severity and search
+  // Filter findings by severity, AI triage, and search
   const filteredFindings = useMemo(() => {
     return displayedFindings.filter(f => {
+      // AI filter
+      if (aiFilter === 'CONFIRMED') {
+        if (f.aiAnalysis && f.aiAnalysis.isFalsePositive) return false
+      } else if (aiFilter === 'FALSE_POSITIVES') {
+        if (!f.aiAnalysis?.isFalsePositive) return false
+      }
+
       if (severityFilter === 'HIGH_CRITICAL') {
         if (f.severity !== 'HIGH' && f.severity !== 'CRITICAL') return false
       } else if (severityFilter === 'MEDIUM') {
@@ -103,12 +141,13 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
         const inRule = (f.ruleName || '').toLowerCase().includes(q)
         const inSink = (f.sink || '').toLowerCase().includes(q)
         const inBranch = (f.branchName || '').toLowerCase().includes(q)
-        return inPath || inRule || inSink || inBranch
+        const inAiReason = (f.aiAnalysis?.reason || '').toLowerCase().includes(q)
+        return inPath || inRule || inSink || inBranch || inAiReason
       }
 
       return true
     })
-  }, [displayedFindings, severityFilter, searchQuery])
+  }, [displayedFindings, severityFilter, aiFilter, searchQuery])
 
   // Delete individual finding
   const handleDeleteFinding = async (finding: FindingWithBranch) => {
@@ -213,6 +252,12 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
   ).length
   const mediumCount = displayedFindings.filter(f => f.severity === 'MEDIUM').length
   const totalCount = displayedFindings.length
+  const aiConfirmedCount = displayedFindings.filter(
+    f => f.aiAnalysis && !f.aiAnalysis.isFalsePositive
+  ).length
+  const aiFalsePositiveCount = displayedFindings.filter(
+    f => f.aiAnalysis?.isFalsePositive
+  ).length
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 selection:bg-rose-500/20 font-sans antialiased">
@@ -299,6 +344,24 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
             <span>{new Date(scan.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
             <span className="text-zinc-700">&bull;</span>
             <span>AST Engine &bull; {scan.durationMs}ms</span>
+            <span className="text-zinc-700">&bull;</span>
+            <span className="flex items-center gap-1.5 text-cyan-400 font-medium">
+              <RiBrainLine className="w-3.5 h-3.5" />
+              <span>AI Triage: {aiStatus?.model || 'qwen2.5-coder:1.5b'}</span>
+            </span>
+
+            {totalCount > 0 && (
+              <button
+                type="button"
+                onClick={handleRevalidateWithAi}
+                disabled={isRevalidating}
+                className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-mono bg-cyan-950/40 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-900/50 hover:text-cyan-100 transition-all cursor-pointer disabled:opacity-50"
+                title="Re-run AI verification with Qwen 2.5 Coder"
+              >
+                <RiRefreshLine className={`w-3.5 h-3.5 ${isRevalidating ? 'animate-spin' : ''}`} />
+                <span>{isRevalidating ? 'Analyzing...' : 'AI Re-Verify'}</span>
+              </button>
+            )}
           </div>
 
           {/* Natural Stats Row without boxes */}
@@ -314,6 +377,20 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
                 <span className="text-zinc-400">Medium</span>
               </div>
 
+              {aiConfirmedCount > 0 && (
+                <div className="flex items-center gap-1.5 text-rose-400">
+                  <span className="font-semibold">{aiConfirmedCount}</span>
+                  <span className="text-rose-400/80">AI Confirmed</span>
+                </div>
+              )}
+
+              {aiFalsePositiveCount > 0 && (
+                <div className="flex items-center gap-1.5 text-emerald-400">
+                  <span className="font-semibold">{aiFalsePositiveCount}</span>
+                  <span className="text-emerald-400/80">AI False Positives</span>
+                </div>
+              )}
+
               <div className="flex items-center gap-1.5 text-zinc-500">
                 <span>{totalCount} Total Finding{totalCount === 1 ? '' : 's'}</span>
               </div>
@@ -321,9 +398,9 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
           )}
         </section>
 
-        {/* Minimal Controls: Severity Filter & Search */}
+        {/* Minimal Controls: Severity Filter, AI Filter & Search */}
         <div className="mb-12 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-2 text-xs font-mono">
+          <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
             <button
               onClick={() => setSeverityFilter('ALL')}
               className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
@@ -354,6 +431,33 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
             >
               Medium ({mediumCount})
             </button>
+
+            <span className="text-zinc-700 mx-1">|</span>
+
+            <button
+              onClick={() => setAiFilter(aiFilter === 'CONFIRMED' ? 'ALL' : 'CONFIRMED')}
+              className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
+                aiFilter === 'CONFIRMED'
+                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 font-medium'
+                  : 'text-zinc-500 hover:text-rose-400'
+              }`}
+            >
+              <RiSparklingLine className="w-3 h-3" />
+              <span>AI Confirmed</span>
+              {aiConfirmedCount > 0 && <span className="opacity-70">({aiConfirmedCount})</span>}
+            </button>
+            <button
+              onClick={() => setAiFilter(aiFilter === 'FALSE_POSITIVES' ? 'ALL' : 'FALSE_POSITIVES')}
+              className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
+                aiFilter === 'FALSE_POSITIVES'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-medium'
+                  : 'text-zinc-500 hover:text-emerald-400'
+              }`}
+            >
+              <RiCheckDoubleLine className="w-3 h-3" />
+              <span>False Positives</span>
+              {aiFalsePositiveCount > 0 && <span className="opacity-70">({aiFalsePositiveCount})</span>}
+            </button>
           </div>
 
           <div className="relative w-full sm:w-64">
@@ -362,7 +466,7 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
               type="text"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Filter by file, sink, rule..."
+              placeholder="Filter by file, sink, rule, AI..."
               className="w-full bg-zinc-900/40 hover:bg-zinc-900/70 focus:bg-zinc-900/90 pl-8 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 rounded-lg outline-none font-mono transition-all"
             />
           </div>
@@ -403,6 +507,31 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
                     <span className="text-xs font-mono text-zinc-500">{finding.cwe}</span>
                     <span className="text-xs font-mono text-zinc-600">&bull;</span>
                     <span className="text-xs font-mono text-zinc-500">{finding.ruleId}</span>
+
+                    {finding.aiAnalysis && (
+                      <>
+                        <span className="text-xs font-mono text-zinc-600">&bull;</span>
+                        <span
+                          className={`text-[10px] font-mono font-medium px-2 py-0.5 rounded flex items-center gap-1 ${
+                            finding.aiAnalysis.isFalsePositive
+                              ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                              : finding.aiAnalysis.verdict === 'CONFIRMED_VULNERABILITY'
+                              ? 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                              : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                          }`}
+                        >
+                          <RiBrainLine className="w-3 h-3" />
+                          <span>
+                            {finding.aiAnalysis.isFalsePositive
+                              ? 'AI False Positive'
+                              : finding.aiAnalysis.verdict === 'CONFIRMED_VULNERABILITY'
+                              ? 'AI Confirmed Vuln'
+                              : 'AI Needs Review'}{' '}
+                            ({finding.aiAnalysis.confidence}%)
+                          </span>
+                        </span>
+                      </>
+                    )}
 
                     {reportMode === 'full' && finding.branchName && (
                       <>
@@ -462,14 +591,76 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
                   </div>
                 )}
 
+                {/* AI Business Logic Triage Callout */}
+                {finding.aiAnalysis && (
+                  <div
+                    className={`mt-4 p-4 rounded-xl border transition-all ${
+                      finding.aiAnalysis.isFalsePositive
+                        ? 'bg-emerald-950/20 border-emerald-500/30'
+                        : finding.aiAnalysis.verdict === 'CONFIRMED_VULNERABILITY'
+                        ? 'bg-rose-950/20 border-rose-500/30'
+                        : 'bg-amber-950/20 border-amber-500/30'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <RiBrainLine
+                          className={`w-4 h-4 ${
+                            finding.aiAnalysis.isFalsePositive
+                              ? 'text-emerald-400'
+                              : finding.aiAnalysis.verdict === 'CONFIRMED_VULNERABILITY'
+                              ? 'text-rose-400'
+                              : 'text-amber-400'
+                          }`}
+                        />
+                        <span
+                          className={`text-xs font-mono font-semibold uppercase tracking-wider ${
+                            finding.aiAnalysis.isFalsePositive
+                              ? 'text-emerald-400'
+                              : finding.aiAnalysis.verdict === 'CONFIRMED_VULNERABILITY'
+                              ? 'text-rose-400'
+                              : 'text-amber-400'
+                          }`}
+                        >
+                          {finding.aiAnalysis.isFalsePositive
+                            ? 'AI Security Verdict: False Positive'
+                            : finding.aiAnalysis.verdict === 'CONFIRMED_VULNERABILITY'
+                            ? 'AI Security Verdict: Confirmed Vulnerability'
+                            : 'AI Security Verdict: Needs Manual Inspection'}
+                        </span>
+                        <span className="text-[11px] font-mono text-zinc-500">
+                          &bull; {finding.aiAnalysis.confidence}% confidence &bull; {finding.aiAnalysis.model}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        {finding.aiAnalysis.sanitizerDetected && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            Sanitizer Detected
+                          </span>
+                        )}
+                        {finding.aiAnalysis.safeCastDetected && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            Safe Typecast
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-zinc-300 leading-relaxed font-sans">
+                      {finding.aiAnalysis.reason}
+                    </p>
+                  </div>
+                )}
+
                 {/* Remediation Note */}
-                {finding.remediation && (
+                {(finding.aiAnalysis?.remediation || finding.remediation) && (
                   <div className="border-l-2 border-emerald-500/50 pl-4 py-0.5 mt-3">
                     <div className="text-[11px] font-mono uppercase tracking-wider text-emerald-400 font-medium">
                       Remediation
                     </div>
                     <p className="text-xs text-zinc-400 leading-relaxed font-sans mt-0.5 max-w-3xl">
-                      {finding.remediation}
+                      {finding.aiAnalysis?.remediation || finding.remediation}
                     </p>
                   </div>
                 )}

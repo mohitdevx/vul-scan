@@ -30,6 +30,20 @@ export interface LoginPayload {
   password: string
 }
 
+export type AiVerdict = 'CONFIRMED_VULNERABILITY' | 'FALSE_POSITIVE' | 'SUSPICIOUS'
+
+export interface AiTriageResult {
+  verdict: AiVerdict
+  confidence: number
+  isFalsePositive: boolean
+  reason: string
+  remediation: string
+  model: string
+  sanitizerDetected?: boolean
+  safeCastDetected?: boolean
+  evaluatedAt: string
+}
+
 export interface FindingItem {
   id: string
   ruleId: string
@@ -43,6 +57,7 @@ export interface FindingItem {
   sink: string
   message: string
   remediation: string
+  aiAnalysis?: AiTriageResult
 }
 
 export interface ScanItem {
@@ -203,4 +218,12 @@ export const scanApi = {
     request<{ scans: ScanItem[] }>(
       `/api/scan/repo-scans${repoUrl ? `?repoUrl=${encodeURIComponent(repoUrl)}` : ''}`
     ),
+
+  getAiStatus: () =>
+    request<{ available: boolean; model: string; error?: string }>('/api/scan/ai-status'),
+
+  revalidateWithAi: (scanId: string) =>
+    request<{ message: string; scan: ScanItem }>(`/api/scan/${scanId}/ai-revalidate`, {
+      method: 'POST',
+    }),
 }

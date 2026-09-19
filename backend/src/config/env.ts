@@ -11,4 +11,7 @@ export const config = {
   githubToken: process.env.GITHUB_TOKEN || '',
   workspaceDir: process.env.WORKSPACE_DIR || './tmp/scans',
   jwtSecret: process.env.JWT_SECRET || 'vulnscan_dev_jwt_secret_change_in_production_key_12345',
+  ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+  aiModel: process.env.AI_MODEL || 'qwen2.5-coder:1.5b',
+  aiValidationEnabled: process.env.AI_VALIDATION_ENABLED !== 'false',
 }

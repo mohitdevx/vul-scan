@@ -1,5 +1,19 @@
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
 
+export type AiVerdict = 'CONFIRMED_VULNERABILITY' | 'FALSE_POSITIVE' | 'SUSPICIOUS'
+
+export interface AiTriageResult {
+  verdict: AiVerdict
+  confidence: number
+  isFalsePositive: boolean
+  reason: string
+  remediation: string
+  model: string
+  sanitizerDetected?: boolean
+  safeCastDetected?: boolean
+  evaluatedAt: string
+}
+
 export interface Finding {
   id: string
   ruleId: string
@@ -13,6 +27,7 @@ export interface Finding {
   sink: string
   message: string
   remediation: string
+  aiAnalysis?: AiTriageResult
 }
 
 export interface EngineContext {
@@ -35,4 +50,7 @@ export interface ScanResult {
   findings: Finding[]
   scannedFilesCount: number
   durationMs: number
+  aiValidated?: boolean
+  aiConfirmedCount?: number
+  aiFalsePositiveCount?: number
 }

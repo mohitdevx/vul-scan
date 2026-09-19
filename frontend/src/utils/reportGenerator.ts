@@ -83,9 +83,14 @@ ${f.message}
 \`\`\`javascript
 ${f.snippet}
 \`\`\`
-
+${f.aiAnalysis ? `
+#### AI Security Triage (${f.aiAnalysis.model})
+- **Verdict**: ${f.aiAnalysis.isFalsePositive ? '🟢 **FALSE POSITIVE**' : f.aiAnalysis.verdict === 'CONFIRMED_VULNERABILITY' ? '🔴 **CONFIRMED VULNERABILITY**' : '🟡 **NEEDS MANUAL REVIEW**'} (${f.aiAnalysis.confidence}% confidence)
+- **Business Logic Analysis**: ${f.aiAnalysis.reason}
+${f.aiAnalysis.sanitizerDetected ? '- *Sanitizer detected in data-flow (DOMPurify/Encoder)*\n' : ''}${f.aiAnalysis.safeCastDetected ? '- *Safe primitive type conversion detected (parseInt/Number)*\n' : ''}
+` : ''}
 #### Hardened Remediation
-> ${f.remediation}
+> ${f.aiAnalysis?.remediation || f.remediation}
 
 ---
 `

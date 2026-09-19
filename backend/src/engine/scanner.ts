@@ -7,6 +7,8 @@ import { parseSourceCode } from './parser.js'
 import { masterEngine } from './masterEngine.js'
 import type { Finding, ScanResult, EngineContext } from './types.js'
 import { logger } from '../utils/logger.js'
+import { config } from '../config/env.js'
+import { validateFindingsBatch } from '../services/aiValidator.service.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -121,7 +123,8 @@ export async function runSecurityScan(repoUrl: string, branch: string = 'main'):
     const targetFiles = await collectFiles(tmpDir, tmpDir)
     logger.info(`Collected ${targetFiles.length} JavaScript/TypeScript files for AST analysis`)
 
-    const allFindings: Finding[] = []
+    let allFindings: Finding[] = []
+    const filesMap = new Map<string, string>()
     let scannedFilesCount = 0
 
     for (const filePath of targetFiles) {
@@ -130,6 +133,7 @@ export async function runSecurityScan(repoUrl: string, branch: string = 'main'):
 
       try {
         const fileContent = await fs.readFile(filePath, 'utf-8')
+        filesMap.set(relPath, fileContent)
         const lines = fileContent.split('\n')
 
         const ast = parseSourceCode(fileContent, filePath)
@@ -148,15 +152,37 @@ export async function runSecurityScan(repoUrl: string, branch: string = 'main'):
       }
     }
 
+    logger.info(
+      `AST Pattern scan finished with ${allFindings.length} preliminary findings across ${scannedFilesCount} files.`
+    )
+
+    // AI Validation Tier: Verify findings against business logic using local Qwen 2.5 Coder
+    let aiConfirmedCount = 0
+    let aiFalsePositiveCount = 0
+
+    if (config.aiValidationEnabled && allFindings.length > 0) {
+      logger.info(`Dispatching ${allFindings.length} findings to AI Validation Pipeline (${config.aiModel})...`)
+      try {
+        allFindings = await validateFindingsBatch(allFindings, filesMap, 2)
+        aiConfirmedCount = allFindings.filter(f => f.aiAnalysis?.verdict === 'CONFIRMED_VULNERABILITY').length
+        aiFalsePositiveCount = allFindings.filter(f => f.aiAnalysis?.isFalsePositive).length
+      } catch (aiErr: any) {
+        logger.warn(`AI validation pipeline encountered an issue: ${aiErr.message}. Continuing with AST findings.`)
+      }
+    }
+
     const durationMs = Date.now() - startTime
     logger.info(
-      `AST Analysis complete for ${repoUrl}: ${allFindings.length} findings across ${scannedFilesCount} files in ${durationMs}ms`
+      `Scan complete for ${repoUrl}: ${allFindings.length} total findings (${aiConfirmedCount} confirmed, ${aiFalsePositiveCount} false-positives) in ${durationMs}ms`
     )
 
     return {
       findings: allFindings,
       scannedFilesCount,
       durationMs,
+      aiValidated: config.aiValidationEnabled,
+      aiConfirmedCount,
+      aiFalsePositiveCount,
     }
   } finally {
     // Clean up temporary workspace directory

@@ -47,11 +47,14 @@ services:
       - PORT=4000
       - NODE_ENV=${NODE_ENV:-production}
       - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:5173}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://vulnscan:vulnscan_password@db:5432/vulnscan_db?schema=public}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-vulnscan}:${POSTGRES_PASSWORD:-my_secret_password}@db:5432/${POSTGRES_DB:-vulnscan}?schema=public
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - JWT_SECRET=${JWT_SECRET:-vulnscan_dev_jwt_secret_change_in_production_key_12345}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - WORKSPACE_DIR=/app/tmp/scans
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - AI_MODEL=${AI_MODEL:-qwen2.5-coder:1.5b}
+      - AI_VALIDATION_ENABLED=${AI_VALIDATION_ENABLED:-true}
     volumes:
       - scan_cache:/app/tmp/scans
     depends_on:

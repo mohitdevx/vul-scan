@@ -9,6 +9,7 @@ import { repositoryRouter } from './routes/repository.routes.js'
 import { errorHandler } from './middlewares/error.middleware.js'
 import { logger } from './utils/logger.js'
 import { getRedisClient } from './config/redis.js'
+import { connectDatabase } from './config/db.js'
 
 const app = express()
 
@@ -54,7 +55,8 @@ app.options('*', cors())
 app.use(express.json())
 app.use(cookieParser())
 
-// Initialize Redis connection
+// Initialize Database & Redis connections
+connectDatabase()
 getRedisClient()
 
 // Application routes

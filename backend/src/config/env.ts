@@ -6,7 +6,7 @@ export const config = {
   port: parseInt(process.env.PORT || '4000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
-  databaseUrl: process.env.DATABASE_URL || 'file:./dev.db',
+  databaseUrl: process.env.DATABASE_URL || 'postgresql://vulnscan:my_secret_password@localhost:5432/vulnscan?schema=public',
   redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
   githubToken: process.env.GITHUB_TOKEN || '',
   workspaceDir: process.env.WORKSPACE_DIR || './tmp/scans',

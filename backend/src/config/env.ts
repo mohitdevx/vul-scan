@@ -9,9 +9,11 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL || 'postgresql://vulnscan:my_secret_password@localhost:5432/vulnscan?schema=public',
   redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
   githubToken: process.env.GITHUB_TOKEN || '',
+  githubClientId: process.env.GITHUB_CLIENT_ID || '',
+  githubClientSecret: process.env.GITHUB_CLIENT_SECRET || '',
   workspaceDir: process.env.WORKSPACE_DIR || './tmp/scans',
   jwtSecret: process.env.JWT_SECRET || 'vulnscan_dev_jwt_secret_change_in_production_key_12345',
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
-  aiModel: process.env.AI_MODEL || 'qwen2.5-coder:1.5b',
+  aiModel: process.env.AI_MODEL || 'qwen2.5-coder:3b',
   aiValidationEnabled: process.env.AI_VALIDATION_ENABLED !== 'false',
 }

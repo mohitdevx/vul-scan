@@ -12,6 +12,10 @@ export interface AiTriageResult {
   sanitizerDetected?: boolean
   safeCastDetected?: boolean
   evaluatedAt: string
+  analysis?: string
+  dataFlow?: string
+  securityImpact?: string
+  untrustedSource?: string
 }
 
 export interface Finding {

@@ -6,6 +6,7 @@ import { healthRouter } from './routes/health.routes.js'
 import { scanRouter } from './routes/scan.routes.js'
 import { authRouter } from './routes/auth.routes.js'
 import { repositoryRouter } from './routes/repository.routes.js'
+import { githubRouter } from './routes/github.routes.js'
 import { errorHandler } from './middlewares/error.middleware.js'
 import { logger } from './utils/logger.js'
 import { getRedisClient } from './config/redis.js'
@@ -64,6 +65,7 @@ app.use('/api/health', healthRouter)
 app.use('/api/auth', authRouter)
 app.use('/api/scan', scanRouter)
 app.use('/api/repositories', repositoryRouter)
+app.use('/api/github', githubRouter)
 
 // Error handling middleware
 app.use(errorHandler)

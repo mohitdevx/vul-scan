@@ -42,6 +42,10 @@ export interface AiTriageResult {
   sanitizerDetected?: boolean
   safeCastDetected?: boolean
   evaluatedAt: string
+  analysis?: string
+  dataFlow?: string
+  securityImpact?: string
+  untrustedSource?: string
 }
 
 export interface FindingItem {
@@ -226,4 +230,95 @@ export const scanApi = {
     request<{ message: string; scan: ScanItem }>(`/api/scan/${scanId}/ai-revalidate`, {
       method: 'POST',
     }),
+
+  generateFix: (scanId: string, findingId: string) =>
+    request<{ message: string; proposal: SecurityFixProposal }>(
+      `/api/scan/${scanId}/findings/${findingId}/generate-fix`,
+      { method: 'POST' }
+    ),
+
+  createPr: (scanId: string, findingId: string, payload: CreatePrPayload) =>
+    request<{ message: string; result: CreatePrResult }>(
+      `/api/scan/${scanId}/findings/${findingId}/create-pr`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+
+  mergePr: (scanId: string, pullNumber: number) =>
+    request<{ merged: boolean; message: string; sha: string }>(`/api/scan/${scanId}/merge-pr`, {
+      method: 'POST',
+      body: JSON.stringify({ pullNumber }),
+    }),
 }
+
+export const githubApi = {
+  getStatus: () =>
+    request<{ connected: boolean; username: string | null; avatarUrl: string | null; warning?: string }>(
+      '/api/github/status'
+    ),
+
+  getOAuthUrl: () =>
+    request<{ configured: boolean; url?: string; clientId?: string; message?: string }>('/api/github/oauth/url'),
+
+  handleOAuthCallback: (code: string) =>
+    request<{ message: string; connected: boolean; username: string; avatarUrl: string }>(
+      '/api/github/oauth/callback',
+      {
+        method: 'POST',
+        body: JSON.stringify({ code }),
+      }
+    ),
+
+  connect: (token: string) =>
+    request<{ message: string; connected: boolean; username: string; avatarUrl: string }>('/api/github/connect', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    }),
+
+  disconnect: () =>
+    request<{ message: string; connected: boolean }>('/api/github/disconnect', {
+      method: 'DELETE',
+    }),
+}
+
+export interface SecurityFixProposal {
+  findingId: string
+  filePath: string
+  targetBranch: string
+  suggestedBranch: string
+  searchSnippet: string
+  replacementSnippet: string
+  originalContext: string
+  fixedContext: string
+  explanation: string
+  prTitle: string
+  prDescription: string
+  commitMessage: string
+  canCreatePr: boolean
+  repoOwner?: string
+  repoName?: string
+}
+
+export interface CreatePrPayload {
+  githubToken?: string
+  targetBranch: string
+  branchName: string
+  filePath: string
+  searchSnippet: string
+  replacementSnippet: string
+  commitMessage: string
+  prTitle: string
+  prDescription: string
+}
+
+export interface CreatePrResult {
+  prUrl: string
+  prNumber: number
+  branch: string
+  isFork: boolean
+  state: string
+  message: string
+}
+

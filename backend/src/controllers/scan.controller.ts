@@ -4,6 +4,7 @@ import { prisma } from '../config/db.js'
 import { logger } from '../utils/logger.js'
 import { runSecurityScan, getRemoteBranches, type ScanResult } from '../engine/index.js'
 import { checkAiHealth, validateFindingWithAi } from '../services/aiValidator.service.js'
+import { generateAiFix, createGitHubPullRequest, mergeGitHubPullRequest } from '../services/prFix.service.js'
 
 function normalizeRepoUrl(url: string): string {
   const trimmed = url.trim()
@@ -458,3 +459,158 @@ export async function revalidateScanWithAi(req: Request, res: Response, next: Ne
     next(error)
   }
 }
+
+const createPrSchema = z.object({
+  githubToken: z.string().optional(),
+  targetBranch: z.string().min(1, 'Target branch required'),
+  branchName: z.string().min(1, 'New branch name required'),
+  filePath: z.string().min(1, 'File path required'),
+  searchSnippet: z.string().min(1, 'Search snippet required'),
+  replacementSnippet: z.string().min(1, 'Replacement snippet required'),
+  commitMessage: z.string().min(1, 'Commit message required'),
+  prTitle: z.string().min(1, 'PR title required'),
+  prDescription: z.string().min(1, 'PR description required'),
+})
+
+export async function generateFindingFix(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id
+    const { id, findingId } = req.params
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const scan = await prisma.scan.findFirst({
+      where: { id, userId },
+    })
+    if (!scan) {
+      res.status(404).json({ error: 'Scan not found' })
+      return
+    }
+
+    let findings: any[] = []
+    if (scan.findingsJson) {
+      try {
+        findings = JSON.parse(scan.findingsJson)
+      } catch {
+        findings = []
+      }
+    }
+
+    const finding = findings.find(f => f.id === findingId)
+    if (!finding) {
+      res.status(404).json({ error: 'Finding not found in this scan' })
+      return
+    }
+
+    logger.info(`Generating AI fix for finding ${findingId} (${finding.ruleName}) in scan ${id}...`)
+    const proposal = await generateAiFix(scan.repoUrl, scan.branch, finding)
+
+    res.json({
+      message: 'Fix generated successfully',
+      proposal,
+    })
+  } catch (error: any) {
+    logger.error(`Error generating fix: ${error.message}`)
+    res.status(500).json({ error: error.message || 'Failed to generate fix with AI' })
+  }
+}
+
+export async function createFindingPr(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id
+    const { id, findingId } = req.params
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const scan = await prisma.scan.findFirst({
+      where: { id, userId },
+    })
+    if (!scan) {
+      res.status(404).json({ error: 'Scan not found' })
+      return
+    }
+
+    const body = createPrSchema.parse(req.body)
+    let githubToken: string | undefined = body.githubToken || (req.headers['x-github-token'] as string)
+    if (!githubToken) {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { githubAccessToken: true },
+      })
+      githubToken = user?.githubAccessToken || undefined
+    }
+
+    logger.info(`Opening Pull Request for scan ${id} finding ${findingId} on ${scan.repoUrl}...`)
+    const result = await createGitHubPullRequest({
+      repoUrl: scan.repoUrl,
+      targetBranch: body.targetBranch,
+      branchName: body.branchName,
+      filePath: body.filePath,
+      searchSnippet: body.searchSnippet,
+      replacementSnippet: body.replacementSnippet,
+      commitMessage: body.commitMessage,
+      prTitle: body.prTitle,
+      prDescription: body.prDescription,
+      githubToken,
+    })
+
+    res.json({
+      message: result.message,
+      result,
+    })
+  } catch (error: any) {
+    logger.error(`Error creating pull request: ${error.message}`)
+    res.status(400).json({ error: error.message || 'Failed to create GitHub Pull Request' })
+  }
+}
+
+const mergePrSchema = z.object({
+  pullNumber: z.number().int().positive('Pull number required'),
+  mergeMethod: z.enum(['merge', 'squash', 'rebase']).optional().default('squash'),
+})
+
+export async function mergeFindingPr(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id
+    const { id } = req.params
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const scan = await prisma.scan.findFirst({
+      where: { id, userId },
+    })
+    if (!scan) {
+      res.status(404).json({ error: 'Scan not found' })
+      return
+    }
+
+    const body = mergePrSchema.parse(req.body)
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { githubAccessToken: true },
+    })
+    const githubToken = user?.githubAccessToken || (req.headers['x-github-token'] as string)
+
+    logger.info(`Merging Pull Request #${body.pullNumber} for scan ${id}...`)
+    const result = await mergeGitHubPullRequest({
+      repoUrl: scan.repoUrl,
+      pullNumber: body.pullNumber,
+      mergeMethod: body.mergeMethod,
+      githubToken,
+    })
+
+    res.json(result)
+  } catch (error: any) {
+    logger.error(`Error merging pull request: ${error.message}`)
+    res.status(400).json({ error: error.message || 'Failed to merge GitHub Pull Request' })
+  }
+}
+
+

@@ -5,11 +5,15 @@ import { ConfirmProvider } from './context/ConfirmContext'
 import { HomePage } from './pages/HomePage'
 import { DashboardPage } from './pages/DashboardPage'
 import { ReportPage } from './pages/ReportPage'
+import { GitHubCallbackPage } from './pages/GitHubCallbackPage'
 import { AuthModal } from './components/organisms/AuthModal'
 
 function AppContent() {
-  const getInitialState = (): { view: 'home' | 'dashboard' | 'report'; scanId: string | null } => {
+  const getInitialState = (): { view: 'home' | 'dashboard' | 'report' | 'github-callback'; scanId: string | null } => {
     const path = window.location.pathname
+    if (path.startsWith('/github/callback')) {
+      return { view: 'github-callback', scanId: null }
+    }
     if (path.startsWith('/report/')) {
       const id = path.replace('/report/', '').trim()
       return { view: 'report', scanId: id || null }
@@ -21,7 +25,7 @@ function AppContent() {
   }
 
   const [initial] = useState(getInitialState)
-  const [currentView, setCurrentView] = useState<'home' | 'dashboard' | 'report'>(initial.view)
+  const [currentView, setCurrentView] = useState<'home' | 'dashboard' | 'report' | 'github-callback'>(initial.view)
   const [inspectingScanId, setInspectingScanId] = useState<string | null>(initial.scanId)
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login')
@@ -154,6 +158,10 @@ function AppContent() {
             scanId={inspectingScanId}
             onBack={() => navigateToView('dashboard')}
           />
+        )}
+
+        {currentView === 'github-callback' && (
+          <GitHubCallbackPage onDone={() => navigateToView('dashboard')} />
         )}
       </div>
 

@@ -4,6 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -12,9 +13,12 @@ model User {
   lastName     String
   orgName      String
   email        String       @unique
-  password     String
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  password          String
+  githubAccessToken String?
+  githubUsername    String?
+  githubAvatarUrl   String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
   repositories Repository[]
   scans        Scan[]

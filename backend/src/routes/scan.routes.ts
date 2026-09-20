@@ -11,6 +11,9 @@ import {
   getRepoScans,
   getAiStatus,
   revalidateScanWithAi,
+  generateFindingFix,
+  createFindingPr,
+  mergeFindingPr,
 } from '../controllers/scan.controller.js'
 import { requireAuth } from '../middlewares/auth.middleware.js'
 
@@ -29,5 +32,8 @@ scanRouter.post('/', triggerScan)
 scanRouter.delete('/', deleteAllScans)
 scanRouter.get('/:id', getScanStatus)
 scanRouter.post('/:id/ai-revalidate', revalidateScanWithAi)
+scanRouter.post('/:id/findings/:findingId/generate-fix', generateFindingFix)
+scanRouter.post('/:id/findings/:findingId/create-pr', createFindingPr)
+scanRouter.post('/:id/merge-pr', mergeFindingPr)
 scanRouter.delete('/:id', deleteScan)
 scanRouter.delete('/:id/findings/:findingId', deleteFinding)

@@ -16,7 +16,8 @@
     "docker:dev:down": "docker compose -f docker-compose.dev.yml down",
     "db:push": "pnpm --filter backend prisma:push",
     "db:generate": "pnpm --filter backend prisma:generate",
-    "db:studio": "pnpm --filter backend prisma:studio"
+    "db:studio": "pnpm --filter backend prisma:studio",
+    "fix:gpu": "./fix-gpu.sh"
   },
   "devDependencies": {
     "concurrently": "^10.0.5"

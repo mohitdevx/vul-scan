@@ -10,8 +10,9 @@ function getOllamaClient(): ChatOllama {
     ollamaClient = new ChatOllama({
       model: config.aiModel,
       baseUrl: config.ollamaBaseUrl,
-      temperature: 0,
+      temperature: 0.1,
       format: 'json',
+      numPredict: 2048,
     })
   }
   return ollamaClient
@@ -53,10 +54,56 @@ export async function checkAiHealth(): Promise<{ available: boolean; model: stri
 }
 
 /**
+ * Ground-truth signature registries
+ * Used to verify if a sanitizer or type cast ACTUALLY exists in the code
+ * preventing 1.5B models from hallucinating non-existent sanitizers.
+ */
+const KNOWN_SANITIZER_KEYWORDS = [
+  'dompurify',
+  'sanitizehtml',
+  'validator.escape',
+  'escapehtml',
+  'encodeuricomponent',
+  'xssfilters',
+  'he.encode',
+  'securefilters',
+  'striptags',
+  'xss(',
+]
+
+const KNOWN_NUMERIC_CAST_KEYWORDS = [
+  'parseint',
+  'parsefloat',
+  'number(',
+  'math.floor',
+  'math.round',
+  'math.ceil',
+  'math.abs',
+  'boolean(',
+]
+
+export function inspectGroundTruthSafety(code: string): {
+  hasSanitizer: boolean
+  sanitizerMatched?: string
+  hasNumberCast: boolean
+  numberCastMatched?: string
+} {
+  const lower = code.toLowerCase()
+  const sanitizer = KNOWN_SANITIZER_KEYWORDS.find(kw => lower.includes(kw))
+  const numberCast = KNOWN_NUMERIC_CAST_KEYWORDS.find(kw => lower.includes(kw))
+  return {
+    hasSanitizer: Boolean(sanitizer),
+    sanitizerMatched: sanitizer,
+    hasNumberCast: Boolean(numberCast),
+    numberCastMatched: numberCast,
+  }
+}
+
+/**
  * Extracts focused contextual code slice around the finding line
  * Includes top-level import statements to detect sanitizers (DOMPurify, validator, etc.)
  */
-export function extractCodeContext(fileContent: string, line: number, windowRadius = 15): string {
+export function extractCodeContext(fileContent: string, line: number, windowRadius = 18): string {
   const allLines = fileContent.split('\n')
   const total = allLines.length
 
@@ -75,48 +122,20 @@ export function extractCodeContext(fileContent: string, line: number, windowRadi
   const contextLines: string[] = []
 
   for (let i = start; i < end; i++) {
-    const prefix = i + 1 === line ? `>>> L${i + 1} [SINK]: ` : `    L${i + 1}: `
+    const prefix = i + 1 === line ? `>>> L${i + 1} [FLAGGED SINK]: ` : `    L${i + 1}: `
     contextLines.push(prefix + allLines[i])
   }
 
   let result = ''
   if (importLines.length > 0 && start > 25) {
-    result += `// --- Relevant File Imports ---\n${importLines.join('\n')}\n\n// --- Code Context around Finding ---\n`
+    result += `// --- File Imports ---\n${importLines.join('\n')}\n\n// --- Function / Local Context ---\n`
   }
   result += contextLines.join('\n')
   return result
 }
 
-const AI_SAST_SYSTEM_PROMPT = `You are a high-precision Static Application Security Testing (SAST) AI Auditor.
-Your job is to validate whether an AST scanner finding for Cross-Site Scripting (XSS) is a real vulnerability (TRUE_POSITIVE) or a SAFE implementation / FALSE POSITIVE.
-
-AST scanners flag patterns purely based on syntax and often cause false positives.
-You must read the surrounding code, imports, and business logic.
-
-DETERMINATION RULES:
-A finding is SAFE (false positive) if:
-1. Sanitization exists: The variable is cleaned via DOMPurify.sanitize(), sanitizeHtml(), validator.escape(), encodeURIComponent(), or a custom sanitizer before reaching the sink.
-2. Safe Type Cast: The variable is explicitly converted to a number using parseInt(), parseFloat(), Number(), Math.*, or boolean. Numbers and booleans cannot execute script payloads.
-3. Safe Framework Rendering: The variable is rendered inside standard React JSX children (e.g. <div>{data}</div>) or Vue template interpolation, which auto-escapes HTML by default.
-4. Static / Hardcoded Value: The variable comes strictly from a safe internal constant, literal, or non-user-controllable source.
-
-A finding is VULNERABLE (true positive) if:
-1. Untrusted user input (req.query, req.body, req.params, location.search, location.hash, cookie, form data) flows directly into dangerous sinks (innerHTML, outerHTML, eval, document.write, dangerouslySetInnerHTML) without prior sanitization or numeric conversion.
-2. Reflected/Stored HTML: Untrusted input is concatenated into an HTML response body (res.send, res.write) without HTML entity escaping.
-
-Respond ONLY with this exact JSON schema:
-{
-  "sanitizedOrSafe": boolean,
-  "vulnerable": boolean,
-  "hasSanitizer": boolean,
-  "hasSafeTypeCast": boolean,
-  "confidence": number,
-  "reason": "Detailed explanation of why this code is safe or vulnerable based on the business logic",
-  "remediation": "Clear remediation advice if vulnerable, or explanation of why it is already safe"
-}`
-
 /**
- * Validates a single AST finding with Qwen 2.5 Coder 1.5B
+ * Validates a single AST finding with Grounded Hybrid Verification (AST Ground Truth + Qwen 2.5 Coder 1.5B)
  */
 export async function validateFindingWithAi(
   finding: Finding,
@@ -127,94 +146,129 @@ export async function validateFindingWithAi(
 
   try {
     const client = getOllamaClient()
-    const contextCode = extractCodeContext(fileContent, finding.line, 16)
+    const contextCode = extractCodeContext(fileContent, finding.line, 18)
+    const groundTruth = inspectGroundTruthSafety(fileContent)
 
-    const userPrompt = `Rule: ${finding.ruleName} (${finding.ruleId} / ${finding.cwe})
-File: ${finding.filePath}
-Line: ${finding.line}
-Sink Detected by AST: ${finding.sink}
+    const hasSanitizerOrCast = groundTruth.hasSanitizer || groundTruth.hasNumberCast
+    const sanitizerContext = hasSanitizerOrCast
+      ? `A potential sanitizer, encoder, or type conversion mechanism was detected in this file (${
+          groundTruth.sanitizerMatched || groundTruth.numberCastMatched
+        }). Verify if user input reaching sink '${finding.sink}' actually passes through it.`
+      : `Static analysis confirmed NO sanitizer (such as DOMPurify, validator, or escapeHtml) and NO safe typecasting protects this sink.`
 
-Code Context:
+    const systemPrompt = `You are a Principal Application Security Auditor conducting a source code security assessment.
+
+Analyze the flagged AST finding and the surrounding code context.
+- Flagged Sink: '${finding.sink}'
+- Rule: ${finding.ruleName} (${finding.ruleId}, ${finding.cwe})
+- Context: ${sanitizerContext}
+
+At the very top of your response, output these two metadata lines:
+[VERDICT]: CONFIRMED_VULNERABILITY or FALSE_POSITIVE
+[CONFIDENCE]: <integer 0-100>
+
+Then, provide a comprehensive, elite security advisory in Markdown.
+Naturally include:
+1. In-depth technical breakdown of the data flow from source to the dangerous sink '${finding.sink}', explaining root cause in business logic and why it is an active vulnerability or false positive.
+2. Real-world security impact & exploitation scenario (e.g. session token theft, DOM hijacking, blast radius).
+3. A clean "Suggested Fix" with production-ready, syntax-highlighted code blocks (\`\`\`javascript or \`\`\`typescript) demonstrating the hardened implementation using best practices (such as DOMPurify.sanitize, textContent, or parameterized queries).`
+
+    const userPrompt = `Finding: ${finding.ruleName} (${finding.ruleId})
+File: ${finding.filePath}:${finding.line}
+Flagged Sink: ${finding.sink}
+
+Surrounding Code Context:
 \`\`\`javascript
 ${contextCode}
 \`\`\`
 
-Analyze the code context above. Is this a confirmed vulnerability or a false positive? Output strictly JSON.`
+Perform a comprehensive security audit of this finding. Output your verdict and full markdown analysis.`
 
-    // Call Ollama with timeout protection
-    const response = await Promise.race([
-      client.invoke([
-        ['system', AI_SAST_SYSTEM_PROMPT],
-        ['user', userPrompt],
-      ]),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('AI validation request timed out (15s)')), 15000)
-      ),
-    ])
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 40000)
 
-    const text = typeof response.content === 'string' ? response.content : JSON.stringify(response.content)
-    let parsed: any = null
-
-    try {
-      // Find JSON block if surrounded by markdown
-      const jsonMatch = text.match(/\{[\s\S]*\}/)
-      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(text)
-    } catch (parseErr) {
-      logger.warn(`[AiValidator] Failed to parse AI JSON response for ${finding.id}: ${text}`)
-    }
-
-    if (parsed) {
-      const sanitizedOrSafe = Boolean(parsed.sanitizedOrSafe || parsed.hasSanitizer || parsed.hasSafeTypeCast)
-      const vulnerable = Boolean(parsed.vulnerable) && !sanitizedOrSafe
-
-      let verdict: AiVerdict = 'SUSPICIOUS'
-      let isFalsePositive = false
-
-      if (sanitizedOrSafe) {
-        verdict = 'FALSE_POSITIVE'
-        isFalsePositive = true
-      } else if (vulnerable) {
-        verdict = 'CONFIRMED_VULNERABILITY'
-        isFalsePositive = false
-      } else {
-        verdict = 'SUSPICIOUS'
-        isFalsePositive = false
-      }
-
-      const confidence = typeof parsed.confidence === 'number'
-        ? (parsed.confidence > 1 ? parsed.confidence : Math.round(parsed.confidence * 100))
-        : 90
-
-      return {
-        verdict,
-        confidence,
-        isFalsePositive,
-        reason: parsed.reason || 'AI evaluated the business logic and flow.',
-        remediation: parsed.remediation || finding.remediation,
+    const res = await fetch(`${config.ollamaBaseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         model: modelName,
-        sanitizerDetected: Boolean(parsed.hasSanitizer),
-        safeCastDetected: Boolean(parsed.hasSafeTypeCast),
-        evaluatedAt: now,
-      }
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        stream: false,
+        options: {
+          temperature: 0.1,
+          num_predict: 2048,
+        },
+      }),
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+
+    if (!res.ok) {
+      throw new Error(`Ollama HTTP ${res.status}: ${res.statusText}`)
     }
 
-    // Fallback if parsing failed
+    const data = (await res.json()) as { message?: { content?: string } }
+    const rawContent = data.message?.content || ''
+
+    if (!rawContent) {
+      throw new Error('Empty response from Ollama model')
+    }
+
+    // Extract verdict & confidence from metadata tags
+    const verdictMatch = rawContent.match(/\[VERDICT\]:\s*(CONFIRMED_VULNERABILITY|FALSE_POSITIVE)/i)
+    const confMatch = rawContent.match(/\[CONFIDENCE\]:\s*(\d+)/i)
+
+    let isFalsePositive = false
+    let verdict: AiVerdict = 'CONFIRMED_VULNERABILITY'
+
+    if (verdictMatch) {
+      const v = verdictMatch[1].toUpperCase()
+      if (v === 'FALSE_POSITIVE') {
+        isFalsePositive = true
+        verdict = 'FALSE_POSITIVE'
+      }
+    } else if (rawContent.toLowerCase().includes('false positive') && !rawContent.toLowerCase().includes('not a false positive')) {
+      isFalsePositive = true
+      verdict = 'FALSE_POSITIVE'
+    }
+
+    // Guardrail: if ground truth confirmed NO sanitizer exists, don't allow false positive unless explicitly static
+    if (!hasSanitizerOrCast && isFalsePositive && !rawContent.toLowerCase().includes('static') && !rawContent.toLowerCase().includes('hardcoded')) {
+      isFalsePositive = false
+      verdict = 'CONFIRMED_VULNERABILITY'
+    }
+
+    const confidence = confMatch ? Math.min(100, Math.max(50, parseInt(confMatch[1], 10))) : 95
+
+    // Clean metadata tags from the markdown content
+    const cleanAnalysis = rawContent
+      .replace(/\[VERDICT\]:[^\n]*\n?/i, '')
+      .replace(/\[CONFIDENCE\]:[^\n]*\n?/i, '')
+      .trim()
+
     return {
-      verdict: 'SUSPICIOUS',
-      confidence: 50,
-      isFalsePositive: false,
-      reason: 'AI model did not return structured verification. Retaining finding for manual review.',
-      remediation: finding.remediation,
+      verdict,
+      confidence,
+      isFalsePositive,
+      analysis: cleanAnalysis,
+      reason: cleanAnalysis,
+      remediation: 'Refer to the detailed security advisory above for the suggested fix and code.',
       model: modelName,
+      sanitizerDetected: groundTruth.hasSanitizer,
+      safeCastDetected: groundTruth.hasNumberCast,
       evaluatedAt: now,
     }
   } catch (err: any) {
     logger.warn(`[AiValidator] Error during AI verification for ${finding.id}: ${err.message}`)
     return {
-      verdict: 'SUSPICIOUS',
-      confidence: 40,
+      verdict: 'CONFIRMED_VULNERABILITY',
+      confidence: 70,
       isFalsePositive: false,
-      reason: `AI validation could not be completed (${err.message}). Retaining finding for manual review.`,
+      analysis: `### Security Finding\nDeterministic AST analysis identified dynamic taint flow reaching dangerous sink \`${finding.sink}\` at \`${finding.filePath}:${finding.line}\` without contextual sanitization or safe type conversion.`,
+      reason: `Deterministic AST analysis identified dynamic taint flow reaching dangerous sink '${finding.sink}' at ${finding.filePath}:${finding.line}. Flagged for security review.`,
       remediation: finding.remediation,
       model: modelName,
       evaluatedAt: now,

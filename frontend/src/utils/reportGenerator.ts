@@ -84,13 +84,14 @@ ${f.message}
 ${f.snippet}
 \`\`\`
 ${f.aiAnalysis ? `
-#### AI Security Triage (${f.aiAnalysis.model})
+#### AI Security & Taint Flow Advisory (${f.aiAnalysis.model || 'qwen2.5-coder:3b'})
 - **Verdict**: ${f.aiAnalysis.isFalsePositive ? '🟢 **FALSE POSITIVE**' : f.aiAnalysis.verdict === 'CONFIRMED_VULNERABILITY' ? '🔴 **CONFIRMED VULNERABILITY**' : '🟡 **NEEDS MANUAL REVIEW**'} (${f.aiAnalysis.confidence}% confidence)
-- **Business Logic Analysis**: ${f.aiAnalysis.reason}
 ${f.aiAnalysis.sanitizerDetected ? '- *Sanitizer detected in data-flow (DOMPurify/Encoder)*\n' : ''}${f.aiAnalysis.safeCastDetected ? '- *Safe primitive type conversion detected (parseInt/Number)*\n' : ''}
+
+${f.aiAnalysis.analysis || f.aiAnalysis.reason}
 ` : ''}
 #### Hardened Remediation
-> ${f.aiAnalysis?.remediation || f.remediation}
+> ${f.aiAnalysis?.remediation || f.remediation || 'Sanitize user inputs and parameterize execution sinks.'}
 
 ---
 `
@@ -199,7 +200,14 @@ This report provides a unified view of all branches analyzed for repository **\`
 ${f.snippet}
 \`\`\`
 
-> **Remediation**: ${f.remediation}
+${f.aiAnalysis ? `
+##### AI Security & Taint Flow Advisory
+- **Verdict**: ${f.aiAnalysis.isFalsePositive ? '🟢 **FALSE POSITIVE**' : f.aiAnalysis.verdict === 'CONFIRMED_VULNERABILITY' ? '🔴 **CONFIRMED VULNERABILITY**' : '🟡 **NEEDS MANUAL REVIEW**'} (${f.aiAnalysis.confidence}% confidence)
+${f.aiAnalysis.sanitizerDetected ? '- *Sanitizer detected in data-flow*\n' : ''}${f.aiAnalysis.safeCastDetected ? '- *Safe primitive conversion detected*\n' : ''}
+
+${f.aiAnalysis.analysis || f.aiAnalysis.reason}
+` : ''}
+> **Remediation**: ${f.aiAnalysis?.remediation || f.remediation}
 
 `
       })

@@ -6,7 +6,7 @@ import { Footer } from '../components/organisms/Footer'
 
 interface HomePageProps {
   onOpenAuth: (mode: 'login' | 'signup') => void
-  onNavigate: (view: 'home' | 'dashboard') => void
+  onNavigate: (view: 'home' | 'dashboard' | 'profile') => void
   onStartScan: (repoUrl?: string) => void
 }
 

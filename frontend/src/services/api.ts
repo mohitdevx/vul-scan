@@ -164,6 +164,18 @@ export const authApi = {
 
   getMe: () => request<{ user: User }>('/api/auth/me'),
 
+  updateProfile: (payload: {
+    firstName?: string
+    lastName?: string
+    orgName?: string
+    currentPassword?: string
+    newPassword?: string
+  }) =>
+    request<{ message: string; user: User }>('/api/auth/profile', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
   logout: () =>
     request<{ message: string }>('/api/auth/logout', {
       method: 'POST',

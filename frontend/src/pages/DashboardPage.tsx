@@ -37,7 +37,7 @@ import { ScanProgressModal } from '../components/organisms/ScanProgressModal'
 import { Navbar } from '../components/organisms/Navbar'
 
 interface DashboardPageProps {
-  onNavigate: (view: 'home' | 'dashboard') => void
+  onNavigate: (view: 'home' | 'dashboard' | 'profile') => void
   onInspectScan?: (scan: ScanItem) => void
   initialScanRepo?: string
   onClearInitialScan?: () => void

@@ -5,15 +5,19 @@ import { ConfirmProvider } from './context/ConfirmContext'
 import { HomePage } from './pages/HomePage'
 import { DashboardPage } from './pages/DashboardPage'
 import { ReportPage } from './pages/ReportPage'
+import { ProfilePage } from './pages/ProfilePage'
 import { GitHubCallbackPage } from './pages/GitHubCallbackPage'
 import { AuthModal } from './components/organisms/AuthModal'
 
 function AppContent() {
-  const getInitialState = (): { view: 'home' | 'dashboard' | 'report' | 'github-callback'; scanId: string | null } => {
+  const getInitialState = (): { view: 'home' | 'dashboard' | 'report' | 'github-callback' | 'profile'; scanId: string | null } => {
     const path = window.location.pathname
     const token = localStorage.getItem('vulnscan_token')
     if (path.startsWith('/github/callback')) {
       return { view: 'github-callback', scanId: null }
+    }
+    if (path.startsWith('/profile')) {
+      return { view: 'profile', scanId: null }
     }
     if (path.startsWith('/report/')) {
       const id = path.replace('/report/', '').trim()
@@ -26,7 +30,7 @@ function AppContent() {
   }
 
   const [initial] = useState(getInitialState)
-  const [currentView, setCurrentView] = useState<'home' | 'dashboard' | 'report' | 'github-callback'>(initial.view)
+  const [currentView, setCurrentView] = useState<'home' | 'dashboard' | 'report' | 'github-callback' | 'profile'>(initial.view)
   const [inspectingScanId, setInspectingScanId] = useState<string | null>(initial.scanId)
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login')
@@ -45,10 +49,13 @@ function AppContent() {
     setAuthModalOpen(true)
   }, [])
 
-  const navigateToView = useCallback((view: 'home' | 'dashboard' | 'report', scanId?: string) => {
+  const navigateToView = useCallback((view: 'home' | 'dashboard' | 'report' | 'profile', scanId?: string) => {
     let targetPath = '/'
     if (view === 'dashboard') {
       targetPath = '/dashboard'
+      setInspectingScanId(null)
+    } else if (view === 'profile') {
+      targetPath = '/profile'
       setInspectingScanId(null)
     } else if (view === 'report' && scanId) {
       targetPath = `/report/${scanId}`
@@ -64,8 +71,8 @@ function AppContent() {
   }, [])
 
   const handleNavigate = useCallback(
-    (view: 'home' | 'dashboard' | 'report') => {
-      if ((view === 'dashboard' || view === 'report') && !isAuthenticated) {
+    (view: 'home' | 'dashboard' | 'report' | 'profile') => {
+      if ((view === 'dashboard' || view === 'report' || view === 'profile') && !isAuthenticated) {
         handleOpenAuth('login')
         return
       }
@@ -112,6 +119,15 @@ function AppContent() {
           setInspectingScanId(id)
           setCurrentView('report')
         }
+      } else if (path.startsWith('/profile')) {
+        if (!isAuthenticated) {
+          window.history.replaceState(null, '', '/')
+          setCurrentView('home')
+          handleOpenAuth('login')
+        } else {
+          setInspectingScanId(null)
+          setCurrentView('profile')
+        }
       } else if (path.startsWith('/dashboard')) {
         if (!isAuthenticated) {
           window.history.replaceState(null, '', '/')
@@ -133,7 +149,7 @@ function AppContent() {
 
   // Guard initial route on load if opened directly without authentication
   useEffect(() => {
-    if (!authLoading && (window.location.pathname.startsWith('/dashboard') || window.location.pathname.startsWith('/report/')) && !isAuthenticated) {
+    if (!authLoading && (window.location.pathname.startsWith('/dashboard') || window.location.pathname.startsWith('/report/') || window.location.pathname.startsWith('/profile')) && !isAuthenticated) {
       window.history.replaceState(null, '', '/')
       setCurrentView('home')
       setInspectingScanId(null)
@@ -158,6 +174,12 @@ function AppContent() {
             onInspectScan={scan => handleInspectScan(scan.id)}
             initialScanRepo={pendingScanRepo}
             onClearInitialScan={() => setPendingScanRepo('')}
+          />
+        )}
+
+        {currentView === 'profile' && (
+          <ProfilePage
+            onNavigate={handleNavigate}
           />
         )}
 

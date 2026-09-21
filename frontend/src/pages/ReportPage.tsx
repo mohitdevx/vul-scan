@@ -877,8 +877,8 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 selection:bg-rose-500/20 font-sans antialiased flex flex-col">
       {/* Top Sticky Header */}
-      <header className="sticky top-0 z-30 bg-[#09090b]/90 backdrop-blur-xl border-b border-zinc-800/80 px-4 sm:px-8 py-3">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
+      <header className="sticky top-0 z-30 bg-canvas/90 backdrop-blur-md px-4 sm:px-8 py-2.5">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-6">
           {/* Breadcrumb Navigation */}
           <div className="flex items-center gap-2.5 text-xs font-mono min-w-0">
             <button
@@ -889,49 +889,54 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
               <span>Dashboard</span>
             </button>
             <span className="text-zinc-700 select-none">/</span>
-            <span className="text-zinc-200 font-medium truncate">
+            <span className="text-zinc-200 font-medium truncate max-w-[160px] sm:max-w-[220px]">
               {scan.repoName || scan.repoUrl}
             </span>
           </div>
 
-          {/* Mode Switcher (Branch vs All Branches) */}
-          <div className="flex items-center gap-1 p-0.5 bg-zinc-900/90 border border-zinc-800/80 rounded-lg text-xs font-mono">
+          {/* Mode Switcher (Branch vs All Branches) - Underline Tabs */}
+          <div className="flex items-center gap-6 text-xs font-mono">
             <button
               type="button"
               onClick={() => setReportMode('branch')}
-              className={`px-3 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`flex items-center gap-1.5 pb-1 transition-all cursor-pointer border-b-2 -mb-px ${
                 reportMode === 'branch'
-                  ? 'bg-zinc-800 text-zinc-100 font-medium shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200'
+                  ? 'border-zinc-100 text-zinc-100 font-semibold'
+                  : 'border-transparent text-zinc-400 hover:text-zinc-200'
               }`}
             >
-              <RiGitBranchLine className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Branch ({scan.branch})</span>
+              <RiGitBranchLine className="w-3.5 h-3.5" />
+              <span>{scan.branch}</span>
             </button>
             <button
               type="button"
               onClick={() => setReportMode('full')}
-              className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 pb-1 transition-all cursor-pointer border-b-2 -mb-px ${
                 reportMode === 'full'
-                  ? 'bg-zinc-800 text-zinc-100 font-medium shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200'
+                  ? 'border-zinc-100 text-zinc-100 font-semibold'
+                  : 'border-transparent text-zinc-400 hover:text-zinc-200'
               }`}
             >
-              All Branches ({allRepoScans.length})
+              <span>All Branches</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                reportMode === 'full' ? 'bg-zinc-800 text-zinc-200' : 'bg-zinc-900 text-zinc-500'
+              }`}>
+                {allRepoScans.length}
+              </span>
             </button>
           </div>
 
-          {/* Action Tools */}
-          <div className="flex items-center gap-2 shrink-0">
+          {/* Action Tools & View Mode Toggle */}
+          <div className="flex items-center gap-4 shrink-0">
             {/* View Mode Toggle: HTML Report vs Raw Markdown */}
-            <div className="flex items-center gap-0.5 bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-xs font-mono">
+            <div className="flex items-center gap-4 text-xs font-mono">
               <button
                 type="button"
                 onClick={() => setViewMode('rendered')}
-                className={`px-2.5 py-1 rounded flex items-center gap-1.5 transition-colors cursor-pointer ${
+                className={`flex items-center gap-1.5 pb-1 transition-all cursor-pointer border-b-2 -mb-px ${
                   viewMode === 'rendered'
-                    ? 'bg-zinc-800 text-zinc-100 font-medium'
-                    : 'text-zinc-500 hover:text-zinc-300'
+                    ? 'border-zinc-100 text-zinc-100 font-medium'
+                    : 'border-transparent text-zinc-500 hover:text-zinc-300'
                 }`}
                 title="View formatted HTML report"
               >
@@ -941,10 +946,10 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
               <button
                 type="button"
                 onClick={() => setViewMode('raw')}
-                className={`px-2.5 py-1 rounded flex items-center gap-1.5 transition-colors cursor-pointer ${
+                className={`flex items-center gap-1.5 pb-1 transition-all cursor-pointer border-b-2 -mb-px ${
                   viewMode === 'raw'
-                    ? 'bg-zinc-800 text-zinc-100 font-medium'
-                    : 'text-zinc-500 hover:text-zinc-300'
+                    ? 'border-zinc-100 text-zinc-100 font-medium'
+                    : 'border-transparent text-zinc-500 hover:text-zinc-300'
                 }`}
                 title="View raw Markdown source"
               >
@@ -958,8 +963,8 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
                 type="button"
                 onClick={handleRevalidate}
                 disabled={isRevalidating}
-                className="hidden md:inline-flex items-center gap-1.5 text-xs font-mono text-zinc-300 hover:text-white bg-zinc-900/80 border border-zinc-800 hover:bg-zinc-800 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                title="Re-run taint flow analysis and AI verification"
+                className="hidden md:inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-zinc-100 px-2 py-1 rounded transition-colors cursor-pointer disabled:opacity-50"
+                title="Re-run taint flow analysis and verification"
               >
                 <RiSparklingLine className={`w-3.5 h-3.5 text-zinc-400 ${isRevalidating ? 'animate-spin' : ''}`} />
                 <span>{isRevalidating ? 'Analyzing...' : 'Re-verify'}</span>
@@ -970,7 +975,7 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
               <button
                 type="button"
                 onClick={() => setExportMenuOpen(!exportMenuOpen)}
-                className="text-xs font-mono text-zinc-300 hover:text-white bg-zinc-900/80 border border-zinc-800 hover:bg-zinc-800 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                className="text-xs font-mono text-zinc-400 hover:text-zinc-100 px-2 py-1 rounded transition-colors flex items-center gap-1.5 cursor-pointer"
                 title="Export report in various formats"
               >
                 <RiDownloadLine className="w-3.5 h-3.5 text-zinc-400" />
@@ -979,13 +984,13 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
 
               {exportMenuOpen && (
                 <div
-                  className="absolute right-0 mt-2 w-48 py-1.5 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl z-50 flex flex-col font-mono text-xs animate-in fade-in slide-in-from-top-1 duration-150"
+                  className="absolute right-0 mt-2 w-48 py-1.5 bg-surface border border-border rounded-xl shadow-2xl z-50 flex flex-col font-mono text-xs animate-in fade-in slide-in-from-top-1 duration-150"
                   onMouseLeave={() => setExportMenuOpen(false)}
                 >
                   <button
                     type="button"
                     onClick={handleExportHtml}
-                    className="px-3 py-2 text-left text-zinc-300 hover:text-white hover:bg-zinc-800/80 flex items-center justify-between transition-colors cursor-pointer"
+                    className="px-3 py-2 text-left text-text-secondary hover:text-text-primary hover:bg-surface-hover flex items-center justify-between transition-colors cursor-pointer"
                   >
                     <span>HTML (.html)</span>
                     <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">Dashboard</span>
@@ -993,15 +998,15 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
                   <button
                     type="button"
                     onClick={handleExportMarkdown}
-                    className="px-3 py-2 text-left text-zinc-300 hover:text-white hover:bg-zinc-800/80 flex items-center justify-between transition-colors cursor-pointer"
+                    className="px-3 py-2 text-left text-text-secondary hover:text-text-primary hover:bg-surface-hover flex items-center justify-between transition-colors cursor-pointer"
                   >
                     <span>Markdown (.md)</span>
-                    <span className="text-[10px] text-zinc-400 bg-zinc-800 px-1.5 py-0.5 rounded">GFM</span>
+                    <span className="text-[10px] text-text-muted bg-surface-muted px-1.5 py-0.5 rounded">GFM</span>
                   </button>
                   <button
                     type="button"
                     onClick={handleExportJson}
-                    className="px-3 py-2 text-left text-zinc-300 hover:text-white hover:bg-zinc-800/80 flex items-center justify-between transition-colors cursor-pointer"
+                    className="px-3 py-2 text-left text-text-secondary hover:text-text-primary hover:bg-surface-hover flex items-center justify-between transition-colors cursor-pointer"
                   >
                     <span>JSON (.json)</span>
                     <span className="text-[10px] text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded border border-cyan-500/20">Schema 1.0</span>
@@ -1014,7 +1019,7 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
               type="button"
               onClick={handleDeleteScan}
               title="Delete scan record"
-              className="p-1.5 rounded-lg text-zinc-500 hover:text-rose-400 hover:bg-zinc-800/80 transition-colors cursor-pointer"
+              className="p-1 rounded text-zinc-500 hover:text-danger transition-colors cursor-pointer"
             >
               <RiDeleteBinLine className="w-4 h-4" />
             </button>

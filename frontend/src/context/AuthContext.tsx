@@ -11,6 +11,14 @@ interface AuthContextValue {
   login: (credentials: LoginPayload) => Promise<boolean>
   signup: (data: SignupPayload) => Promise<boolean>
   logout: () => Promise<void>
+  updateProfile: (payload: {
+    firstName?: string
+    lastName?: string
+    orgName?: string
+    currentPassword?: string
+    newPassword?: string
+  }) => Promise<boolean>
+  updateUser: (user: User) => void
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
@@ -126,6 +134,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [toast])
 
+  const updateProfile = useCallback(
+    async (payload: {
+      firstName?: string
+      lastName?: string
+      orgName?: string
+      currentPassword?: string
+      newPassword?: string
+    }): Promise<boolean> => {
+      setIsActionLoading(true)
+      try {
+        const res = await authApi.updateProfile(payload)
+        setUser(res.user)
+        localStorage.setItem('vulnscan_user', JSON.stringify(res.user))
+        setIsActionLoading(false)
+        toast.success('Your profile has been successfully updated.', 'Profile Updated')
+        return true
+      } catch (err: any) {
+        setIsActionLoading(false)
+        toast.error(err.message || 'Failed to update profile', 'Update Error')
+        return false
+      }
+    },
+    [toast]
+  )
+
+  const updateUser = useCallback((updatedUser: User) => {
+    setUser(updatedUser)
+    localStorage.setItem('vulnscan_user', JSON.stringify(updatedUser))
+  }, [])
+
   return (
     <AuthContext.Provider
       value={{
@@ -137,6 +175,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         signup,
         logout,
+        updateProfile,
+        updateUser,
       }}
     >
       {children}

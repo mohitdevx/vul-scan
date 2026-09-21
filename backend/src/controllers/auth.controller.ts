@@ -220,6 +220,63 @@ export async function getMe(req: Request, res: Response, next: NextFunction): Pr
   }
 }
 
+export async function updateProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = (req as any).user?.id
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized', message: 'Not authenticated' })
+      return
+    }
+
+    const { firstName, lastName, orgName, currentPassword, newPassword } = req.body
+
+    const existingUser = await prisma.user.findUnique({
+      where: { id: userId },
+    })
+
+    if (!existingUser) {
+      res.status(404).json({ error: 'Not found', message: 'User not found' })
+      return
+    }
+
+    const dataToUpdate: Record<string, string> = {}
+    if (firstName && typeof firstName === 'string') dataToUpdate.firstName = firstName.trim()
+    if (lastName && typeof lastName === 'string') dataToUpdate.lastName = lastName.trim()
+    if (orgName && typeof orgName === 'string') dataToUpdate.orgName = orgName.trim()
+
+    if (newPassword && typeof newPassword === 'string') {
+      if (!currentPassword) {
+        res.status(400).json({ error: 'Validation Error', message: 'Current password is required to change password' })
+        return
+      }
+      const isMatch = await bcrypt.compare(currentPassword, existingUser.password)
+      if (!isMatch) {
+        res.status(400).json({ error: 'Validation Error', message: 'Current password is incorrect' })
+        return
+      }
+      const salt = await bcrypt.genSalt(10)
+      dataToUpdate.password = await bcrypt.hash(newPassword, salt)
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: dataToUpdate,
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        orgName: true,
+        email: true,
+        createdAt: true,
+      },
+    })
+
+    res.json({ message: 'Profile updated successfully', user: updatedUser })
+  } catch (error) {
+    next(error)
+  }
+}
+
 export function logout(_req: Request, res: Response): void {
   res.clearCookie('token')
   res.json({ message: 'Logged out successfully' })

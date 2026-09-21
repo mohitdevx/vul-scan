@@ -10,12 +10,11 @@ import { Logo } from '../atoms/Logo'
 import { Button } from '../atoms/Button'
 import { useAuth } from '../../context/AuthContext'
 import { useConfirm } from '../../context/ConfirmContext'
-import { ProfileModal } from './ProfileModal'
 
 interface NavbarProps {
-  onOpenAuth: (mode: 'login' | 'signup') => void
-  onNavigate: (view: 'home' | 'dashboard') => void
-  currentView: 'home' | 'dashboard'
+  onOpenAuth?: (mode: 'login' | 'signup') => void
+  onNavigate: (view: 'home' | 'dashboard' | 'profile') => void
+  currentView?: 'home' | 'dashboard' | 'report' | 'profile'
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -27,7 +26,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   const { confirm } = useConfirm()
 
   const [menuOpen, setMenuOpen] = useState(false)
-  const [profileModalOpen, setProfileModalOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -79,7 +77,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const handleOpenProfile = () => {
     setMenuOpen(false)
-    setProfileModalOpen(true)
+    onNavigate('profile')
   }
 
   const initials = user
@@ -93,14 +91,13 @@ export const Navbar: React.FC<NavbarProps> = ({
     : 'User'
 
   return (
-    <>
-      <header className="border-b border-border bg-surface/90 backdrop-blur-md px-4 sm:px-8 py-3.5 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          {/* Brand */}
-          <div
-            onClick={() => onNavigate(isAuthenticated ? 'dashboard' : 'home')}
-            className="cursor-pointer select-none transition-opacity hover:opacity-90 flex items-center gap-3"
-          >
+    <header className="bg-surface/90 backdrop-blur-md px-4 sm:px-8 py-2 sticky top-0 z-40">
+      <div className="max-w-7xl mx-auto flex items-center justify-between">
+        {/* Brand */}
+        <div
+          onClick={() => onNavigate(isAuthenticated ? 'dashboard' : 'home')}
+          className="cursor-pointer select-none transition-opacity hover:opacity-90 flex items-center gap-3"
+        >
             <Logo showWordmark size="md" />
           </div>
 
@@ -215,14 +212,14 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => onOpenAuth('login')}
+                  onClick={() => onOpenAuth?.('login')}
                 >
                   Sign in
                 </Button>
                 <Button
                   variant="primary"
                   size="sm"
-                  onClick={() => onOpenAuth('signup')}
+                  onClick={() => onOpenAuth?.('signup')}
                 >
                   Get Started
                 </Button>
@@ -231,12 +228,5 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
       </header>
-
-      {/* View / Edit Profile Modal */}
-      <ProfileModal
-        isOpen={profileModalOpen}
-        onClose={() => setProfileModalOpen(false)}
-      />
-    </>
-  )
+    )
 }

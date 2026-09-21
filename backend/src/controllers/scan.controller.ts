@@ -5,6 +5,7 @@ import { logger } from '../utils/logger.js'
 import { runSecurityScan, getRemoteBranches, type ScanResult } from '../engine/index.js'
 import { checkAiHealth, validateFindingWithAi } from '../services/aiValidator.service.js'
 import { generateAiFix, createGitHubPullRequest, mergeGitHubPullRequest } from '../services/prFix.service.js'
+import { generateSecurityReport } from '../reporting/index.js'
 
 function normalizeRepoUrl(url: string): string {
   const trimmed = url.trim()
@@ -610,6 +611,73 @@ export async function mergeFindingPr(req: Request, res: Response, next: NextFunc
   } catch (error: any) {
     logger.error(`Error merging pull request: ${error.message}`)
     res.status(400).json({ error: error.message || 'Failed to merge GitHub Pull Request' })
+  }
+}
+
+export async function exportScanReport(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id
+    const { id } = req.params
+    const format = (req.query.format as string || 'html').toLowerCase()
+
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const scan = await prisma.scan.findFirst({
+      where: { id, userId },
+      include: { repository: true },
+    })
+
+    if (!scan) {
+      res.status(404).json({ error: 'Scan not found' })
+      return
+    }
+
+    let findings = []
+    if (scan.findingsJson) {
+      try {
+        findings = JSON.parse(scan.findingsJson)
+      } catch {
+        findings = []
+      }
+    }
+
+    const reportOutput = generateSecurityReport({
+      id: scan.id,
+      repoName: scan.repoName || scan.repository?.name,
+      repoUrl: scan.repoUrl,
+      branch: scan.branch,
+      commitSha: scan.commitSha || undefined,
+      durationMs: scan.durationMs,
+      createdAt: scan.createdAt,
+      findings,
+    })
+
+    const sanitizedRepo = (scan.repoName || 'repo').replace(/[^a-zA-Z0-9_-]/g, '_')
+    const sanitizedBranch = scan.branch.replace(/[^a-zA-Z0-9_-]/g, '_')
+
+    if (format === 'json') {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.setHeader('Content-Disposition', `attachment; filename="vulscan-report-${sanitizedRepo}-${sanitizedBranch}.json"`)
+      res.send(reportOutput.json)
+      return
+    }
+
+    if (format === 'markdown' || format === 'md') {
+      res.setHeader('Content-Type', 'text/markdown; charset=utf-8')
+      res.setHeader('Content-Disposition', `attachment; filename="vulscan-report-${sanitizedRepo}-${sanitizedBranch}.md"`)
+      res.send(reportOutput.markdown)
+      return
+    }
+
+    // Default to HTML
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    res.setHeader('Content-Disposition', `inline; filename="vulscan-report-${sanitizedRepo}-${sanitizedBranch}.html"`)
+    res.send(reportOutput.html)
+  } catch (error) {
+    next(error)
   }
 }
 

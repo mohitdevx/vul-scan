@@ -9,7 +9,7 @@ interface TerminalWindowProps {
 
 export const TerminalWindow: FC<TerminalWindowProps> = ({
   title = 'express-auth-service',
-  badge = 'AST Engine',
+  badge,
   children,
   className = '',
 }) => {

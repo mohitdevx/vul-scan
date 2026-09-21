@@ -14,6 +14,7 @@ import {
   generateFindingFix,
   createFindingPr,
   mergeFindingPr,
+  exportScanReport,
 } from '../controllers/scan.controller.js'
 import { requireAuth } from '../middlewares/auth.middleware.js'
 
@@ -31,6 +32,7 @@ scanRouter.get('/', listScans)
 scanRouter.post('/', triggerScan)
 scanRouter.delete('/', deleteAllScans)
 scanRouter.get('/:id', getScanStatus)
+scanRouter.get('/:id/report', exportScanReport)
 scanRouter.post('/:id/ai-revalidate', revalidateScanWithAi)
 scanRouter.post('/:id/findings/:findingId/generate-fix', generateFindingFix)
 scanRouter.post('/:id/findings/:findingId/create-pr', createFindingPr)

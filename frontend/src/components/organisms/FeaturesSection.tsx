@@ -120,7 +120,7 @@ export const FeaturesSection: FC = () => {
             Vulnerability Analyzers
           </h2>
           <p className="text-sm text-zinc-400 max-w-2xl leading-relaxed">
-            Deterministic AST pattern rulesets covering critical vulnerability classes in application source code.
+            Security analyzers covering critical vulnerability classes in application source code.
           </p>
         </div>
 

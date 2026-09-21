@@ -18,14 +18,57 @@ const IGNORED_DIRS = new Set([
   'dist',
   'build',
   '.next',
+  '.nuxt',
   'coverage',
   'vendor',
   '.turbo',
   '.husky',
   'fixtures',
   'fixture',
+  'test',
+  'tests',
+  '__tests__',
+  'spec',
+  'specs',
+  'example',
+  'examples',
+  'sample',
+  'samples',
+  'demo',
+  'demos',
+  'sandbox',
+  'docs',
+  'documentation',
+  'doc',
+  'website',
+  'benchmarks',
+  'benchmark',
+  'mocks',
+  '__mocks__',
+  '.github',
+  '.vscode',
+  '.idea',
 ])
 
+const IGNORED_FILE_SUFFIXES = [
+  '.min.js',
+  '.min.mjs',
+  '.min.cjs',
+  '.bundle.js',
+  '.bundle.min.js',
+  '.d.ts',
+  '.map',
+  '.test.js',
+  '.test.ts',
+  '.test.jsx',
+  '.test.tsx',
+  '.spec.js',
+  '.spec.ts',
+  '.spec.jsx',
+  '.spec.tsx',
+]
+
+const MAX_FILE_SIZE_BYTES = 300 * 1024 // 300KB
 const VALID_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'])
 
 export async function getRemoteBranches(repoUrl: string): Promise<{ branches: string[]; defaultBranch: string }> {
@@ -91,16 +134,28 @@ async function collectFiles(dir: string, baseDir: string): Promise<string[]> {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name)
     const relPath = path.relative(baseDir, fullPath)
+    const lowerName = entry.name.toLowerCase()
 
     if (entry.isDirectory()) {
-      if (!IGNORED_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
+      if (!IGNORED_DIRS.has(lowerName) && !entry.name.startsWith('.')) {
         const subFiles = await collectFiles(fullPath, baseDir)
         result.push(...subFiles)
       }
     } else if (entry.isFile()) {
       const ext = path.extname(entry.name).toLowerCase()
-      if (VALID_EXTENSIONS.has(ext) && !entry.name.endsWith('.d.ts') && !entry.name.endsWith('.min.js')) {
-        result.push(fullPath)
+      const isIgnoredSuffix = IGNORED_FILE_SUFFIXES.some(suffix => lowerName.endsWith(suffix))
+
+      if (VALID_EXTENSIONS.has(ext) && !isIgnoredSuffix) {
+        try {
+          const stats = await fs.stat(fullPath)
+          if (stats.size <= MAX_FILE_SIZE_BYTES) {
+            result.push(fullPath)
+          } else {
+            logger.debug(`Skipping large file > 300KB: ${relPath} (${stats.size} bytes)`)
+          }
+        } catch {
+          result.push(fullPath)
+        }
       }
     }
   }
@@ -163,7 +218,7 @@ export async function runSecurityScan(repoUrl: string, branch: string = 'main'):
     if (config.aiValidationEnabled && allFindings.length > 0) {
       logger.info(`Dispatching ${allFindings.length} findings to AI Validation Pipeline (${config.aiModel})...`)
       try {
-        allFindings = await validateFindingsBatch(allFindings, filesMap, 2)
+        allFindings = await validateFindingsBatch(allFindings, filesMap, 1)
         aiConfirmedCount = allFindings.filter(f => f.aiAnalysis?.verdict === 'CONFIRMED_VULNERABILITY').length
         aiFalsePositiveCount = allFindings.filter(f => f.aiAnalysis?.isFalsePositive).length
       } catch (aiErr: any) {

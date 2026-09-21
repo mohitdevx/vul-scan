@@ -511,15 +511,15 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
 
               {/* Code Diff Section */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between border-b border-zinc-800 pb-0">
+                  <div className="flex items-center gap-6">
                     <button
                       type="button"
                       onClick={() => setActiveTab('diff')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-mono transition-colors cursor-pointer ${
+                      className={`pb-2 text-xs font-mono transition-all cursor-pointer border-b-2 -mb-px ${
                         activeTab === 'diff'
-                          ? 'bg-zinc-800 text-zinc-100 font-semibold border border-zinc-700'
-                          : 'text-zinc-400 hover:text-zinc-200'
+                          ? 'border-zinc-100 text-zinc-100 font-semibold'
+                          : 'border-transparent text-zinc-400 hover:text-zinc-200'
                       }`}
                     >
                       Side-by-Side Diff
@@ -527,10 +527,10 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                     <button
                       type="button"
                       onClick={() => setActiveTab('preview')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-mono transition-colors cursor-pointer ${
+                      className={`pb-2 text-xs font-mono transition-all cursor-pointer border-b-2 -mb-px ${
                         activeTab === 'preview'
-                          ? 'bg-zinc-800 text-zinc-100 font-semibold border border-zinc-700'
-                          : 'text-zinc-400 hover:text-zinc-200'
+                          ? 'border-zinc-100 text-zinc-100 font-semibold'
+                          : 'border-transparent text-zinc-400 hover:text-zinc-200'
                       }`}
                     >
                       Context Preview

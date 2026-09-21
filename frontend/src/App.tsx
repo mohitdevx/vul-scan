@@ -11,6 +11,7 @@ import { AuthModal } from './components/organisms/AuthModal'
 function AppContent() {
   const getInitialState = (): { view: 'home' | 'dashboard' | 'report' | 'github-callback'; scanId: string | null } => {
     const path = window.location.pathname
+    const token = localStorage.getItem('vulnscan_token')
     if (path.startsWith('/github/callback')) {
       return { view: 'github-callback', scanId: null }
     }
@@ -18,7 +19,7 @@ function AppContent() {
       const id = path.replace('/report/', '').trim()
       return { view: 'report', scanId: id || null }
     }
-    if (path.startsWith('/dashboard')) {
+    if (path.startsWith('/dashboard') || (path === '/' && token)) {
       return { view: 'dashboard', scanId: null }
     }
     return { view: 'home', scanId: null }
@@ -31,6 +32,13 @@ function AppContent() {
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login')
   const [pendingScanRepo, setPendingScanRepo] = useState<string>('')
   const { isAuthenticated, isLoading: authLoading } = useAuth()
+
+  // Auto redirect authenticated users away from home page directly to dashboard
+  useEffect(() => {
+    if (!authLoading && isAuthenticated && currentView === 'home' && window.location.pathname === '/') {
+      navigateToView('dashboard')
+    }
+  }, [authLoading, isAuthenticated, currentView])
 
   const handleOpenAuth = useCallback((mode: 'login' | 'signup') => {
     setAuthMode(mode)

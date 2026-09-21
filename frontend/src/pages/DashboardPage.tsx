@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  RiArrowLeftLine,
-  RiLogoutBoxRLine,
   RiGithubLine,
   RiGitBranchLine,
   RiPlayLine,
@@ -19,10 +17,8 @@ import {
 } from '@remixicon/react'
 import { Button } from '../components/atoms/Button'
 import { Badge } from '../components/atoms/Badge'
-import { Logo } from '../components/atoms/Logo'
 import { Spinner } from '../components/atoms/Spinner'
 import { useConfirm } from '../context/ConfirmContext'
-import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
 import { BranchSelect } from '../components/molecules/BranchSelect'
 import {
@@ -37,6 +33,8 @@ import {
   generateFullRepoMarkdownReport,
   downloadMarkdownFile,
 } from '../utils/reportGenerator'
+import { ScanProgressModal } from '../components/organisms/ScanProgressModal'
+import { Navbar } from '../components/organisms/Navbar'
 
 interface DashboardPageProps {
   onNavigate: (view: 'home' | 'dashboard') => void
@@ -51,7 +49,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   initialScanRepo,
   onClearInitialScan,
 }) => {
-  const { user, logout } = useAuth()
   const { success, error, info } = useToast()
   const { confirm } = useConfirm()
 
@@ -70,6 +67,17 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [scanningRepoId, setScanningRepoId] = useState<string | null>(null)
   const [isScanningNew, setIsScanningNew] = useState(false)
   const [isAddingRepo, setIsAddingRepo] = useState(false)
+  const [scanModal, setScanModal] = useState<{
+    isOpen: boolean
+    repoUrl: string
+    branch: string
+    error?: string | null
+  }>({
+    isOpen: false,
+    repoUrl: '',
+    branch: 'main',
+    error: null,
+  })
 
   // Fetch all dashboard data
   const fetchData = useCallback(async (isSilent = false) => {
@@ -114,8 +122,14 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         setIsScanningNew(true)
       }
 
+      setScanModal({
+        isOpen: true,
+        repoUrl: cleanUrl,
+        branch: targetBranch || 'main',
+        error: null,
+      })
+
       try {
-        info(`Cloning & running AST syntax analysis on ${cleanUrl} [${targetBranch}]...`, 'Scan Started')
         const result = await scanApi.trigger({
           repoUrl: cleanUrl,
           branch: targetBranch || 'main',
@@ -126,25 +140,27 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
         if (findingsCount > 0) {
           info(
-            `AST Scan identified ${findingsCount} potential vulnerabilities (${scan.highCount} High, ${scan.mediumCount} Medium).`,
+            `Scan identified ${findingsCount} potential vulnerabilities (${scan.highCount} High, ${scan.mediumCount} Medium).`,
             'Scan Completed'
           )
         } else {
           success('Clean scan: 0 security vulnerabilities detected.', 'Scan Completed')
         }
 
-        // Auto open report page to inspect results
-        if (onInspectScan) {
-          onInspectScan(scan)
-        }
-
-        // Note: Keep repoUrlInput intact so user can change branches or re-scan
+        // Brief delay for user to register 100% completion in modal
+        setTimeout(() => {
+          setScanModal(prev => ({ ...prev, isOpen: false }))
+          if (onInspectScan) {
+            onInspectScan(scan)
+          }
+        }, 500)
 
         // Refresh lists in background
         await fetchData(true)
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Scan execution failed'
         error(msg, 'Scan Failed')
+        setScanModal(prev => ({ ...prev, error: msg }))
       } finally {
         if (repoId) {
           setScanningRepoId(null)
@@ -153,7 +169,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         }
       }
     },
-    [error, info, success, fetchData]
+    [error, info, success, fetchData, onInspectScan]
   )
 
   // Initial load
@@ -298,69 +314,25 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
   return (
     <div className="min-h-screen bg-canvas text-text-primary flex flex-col font-sans selection:bg-zinc-800 selection:text-zinc-100">
-      {/* App Header */}
-      <header className="border-b border-border bg-surface/90 backdrop-blur-md px-4 sm:px-8 py-3.5 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div
-              onClick={() => onNavigate('home')}
-              className="cursor-pointer select-none"
-            >
-              <Logo showWordmark size="md" />
-            </div>
-
-            <div className="hidden md:flex items-center gap-2 text-xs text-zinc-500 font-mono border-l border-zinc-800 pl-4">
-              <span>Security Center</span>
-              <span className="text-zinc-700">/</span>
-              <span className="text-zinc-300">AST Analysis Engine</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {user && (
-              <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-900/90 border border-zinc-800 text-xs font-mono">
-                <span className="text-zinc-200 font-medium">{user.orgName}</span>
-                <span className="text-zinc-600">&bull;</span>
-                <span className="text-zinc-400">{user.email}</span>
-              </div>
-            )}
-
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onNavigate('home')}
-              icon={<RiArrowLeftLine className="w-4 h-4" />}
-            >
-              Home
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={logout}
-              icon={<RiLogoutBoxRLine className="w-4 h-4" />}
-            >
-              Sign Out
-            </Button>
-          </div>
-        </div>
-      </header>
+      {/* App Header / Navbar */}
+      <Navbar
+        onOpenAuth={() => {}}
+        onNavigate={onNavigate}
+        currentView="dashboard"
+      />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         {/* Page Title Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
-            <div className="flex items-center gap-2.5">
+            <div>
               <h1 className="text-2xl font-bold tracking-tight text-zinc-100 font-sans">
                 Vulnerability Dashboard
               </h1>
-              <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
-                v2.4.0-AST
-              </span>
             </div>
             <p className="text-xs sm:text-sm text-zinc-400">
-              Deterministic AST syntax tree security scanning and repository vulnerability history.
+              Manage repositories and view vulnerability scan reports.
             </p>
           </div>
 
@@ -383,7 +355,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         <section className="space-y-2">
           <div className="flex items-center justify-between text-xs font-mono text-zinc-500 px-0.5">
             <span className="uppercase tracking-wider">Scan or Track Repository</span>
-            <span className="hidden sm:inline">Deterministic AST Analysis</span>
           </div>
 
           <form
@@ -490,23 +461,25 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           </div>
         </section>
 
-        {/* Repositories & History Tabbed Section (No border, fixed height & scrollable) */}
+        {/* Repositories & History Tabbed Section */}
         <section className="bg-surface/60 rounded-xl overflow-hidden">
           {/* Tabs & Search Controls Header */}
-          <div className="px-5 py-3 bg-zinc-950/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-1 p-0.5 bg-zinc-900/60 rounded-lg text-xs font-mono">
+          <div className="px-5 pt-3 pb-0 bg-zinc-950/40 border-b border-zinc-800/80 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+            <div className="flex items-center gap-6 text-xs font-mono">
               <button
                 type="button"
                 onClick={() => setActiveTab('repos')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-mono font-medium transition-all cursor-pointer ${
+                className={`flex items-center gap-2 pb-3 text-xs font-mono font-medium transition-all cursor-pointer border-b-2 -mb-px ${
                   activeTab === 'repos'
-                    ? 'bg-zinc-800 text-zinc-100'
-                    : 'text-zinc-400 hover:text-zinc-200'
+                    ? 'border-zinc-100 text-zinc-100 font-semibold'
+                    : 'border-transparent text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 <RiFolderLine className="w-3.5 h-3.5" />
                 <span>Tracked Repositories</span>
-                <span className="text-[10px] text-zinc-500">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  activeTab === 'repos' ? 'bg-zinc-800 text-zinc-200' : 'bg-zinc-900 text-zinc-500'
+                }`}>
                   {repositories.length}
                 </span>
               </button>
@@ -514,21 +487,23 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveTab('scans')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-mono font-medium transition-all cursor-pointer ${
+                className={`flex items-center gap-2 pb-3 text-xs font-mono font-medium transition-all cursor-pointer border-b-2 -mb-px ${
                   activeTab === 'scans'
-                    ? 'bg-zinc-800 text-zinc-100'
-                    : 'text-zinc-400 hover:text-zinc-200'
+                    ? 'border-zinc-100 text-zinc-100 font-semibold'
+                    : 'border-transparent text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 <RiHistoryLine className="w-3.5 h-3.5" />
                 <span>Scan History</span>
-                <span className="text-[10px] text-zinc-500">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  activeTab === 'scans' ? 'bg-zinc-800 text-zinc-200' : 'bg-zinc-900 text-zinc-500'
+                }`}>
                   {scans.length}
                 </span>
               </button>
             </div>
 
-            <div className="flex items-center gap-2.5 w-full sm:w-auto">
+            <div className="flex items-center gap-2.5 w-full sm:w-auto pb-2.5">
               {activeTab === 'scans' && scans.length > 0 && (
                 <button
                   type="button"
@@ -848,6 +823,14 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           )}
         </section>
       </main>
+
+      <ScanProgressModal
+        isOpen={scanModal.isOpen}
+        repoUrl={scanModal.repoUrl}
+        branch={scanModal.branch}
+        error={scanModal.error}
+        onClose={() => setScanModal(prev => ({ ...prev, isOpen: false, error: null }))}
+      />
     </div>
   )
 }

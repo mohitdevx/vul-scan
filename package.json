@@ -10,6 +10,7 @@
     "build:frontend": "pnpm --filter frontend build",
     "build:backend": "pnpm --filter backend build",
     "build": "pnpm -r run build",
+    "test": "pnpm --filter backend test",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",
     "docker:dev": "docker compose -f docker-compose.dev.yml up -d",

@@ -21,8 +21,14 @@ import { CodeBlock } from '../components/atoms/CodeBlock'
 import { FixPrModal } from '../components/organisms/FixPrModal'
 import {
   generateBranchMarkdownReport,
+  generateBranchHtmlReport,
+  generateBranchJsonReport,
   generateFullRepoMarkdownReport,
+  generateFullRepoHtmlReport,
+  generateFullRepoJsonReport,
   downloadMarkdownFile,
+  downloadHtmlFile,
+  downloadJsonFile,
 } from '../utils/reportGenerator'
 
 interface ReportPageProps {
@@ -35,55 +41,194 @@ interface FindingWithBranch extends FindingItem {
   sourceScanId?: string
 }
 
-function renderInlineMarkdown(text: string): React.ReactNode[] {
-  const regex = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\))/g
-  const parts = text.split(regex)
+function decodeEntities(str: string): string {
+  return str
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&mdash;/g, '—')
+    .replace(/&ndash;/g, '–')
+    .replace(/&bull;/g, '•')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+}
 
-  return parts.map((part, idx) => {
-    // Inline code
+function renderInlineMarkdown(rawText: string): React.ReactNode[] {
+  if (!rawText) return []
+
+  const text = decodeEntities(rawText)
+
+  // Tokenize code, bold, italic, links, HTML anchors, HTML tags, severity badges
+  const tokenRegex = /(<a\s+[^>]*>.*?<\/a>|<a\s+[^>]*\/>|<a\s+[^>]*>|<\/a>|<span\s*[^>]*>.*?<\/span>|<code\s*[^>]*>.*?<\/code>|<kbd\s*[^>]*>.*?<\/kbd>|<mark\s*[^>]*>.*?<\/mark>|<br\s*\/?>|<[^>]+>|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\)|\[(CRITICAL|HIGH|MEDIUM|LOW|INFO)\])/gi
+
+  const parts = text.split(tokenRegex)
+  const result: React.ReactNode[] = []
+
+  for (let idx = 0; idx < parts.length; idx++) {
+    const part = parts[idx]
+    if (!part) continue
+
+    // 1. Inline code `code`
     if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
-      return (
+      result.push(
         <code
-          key={idx}
+          key={`code-${idx}`}
           className="font-mono text-[11px] bg-zinc-900/90 text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800"
         >
           {part.slice(1, -1)}
         </code>
       )
+      continue
     }
-    // Bold
+
+    // 2. Bold **text**
     if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
-      return (
-        <strong key={idx} className="font-semibold text-zinc-100">
-          {part.slice(2, -2)}
+      result.push(
+        <strong key={`bold-${idx}`} className="font-semibold text-zinc-100">
+          {renderInlineMarkdown(part.slice(2, -2))}
         </strong>
       )
+      continue
     }
-    // Italic
+
+    // 3. Italic *text*
     if (part.startsWith('*') && part.endsWith('*') && part.length >= 2) {
-      return (
-        <em key={idx} className="italic text-zinc-300">
-          {part.slice(1, -1)}
+      result.push(
+        <em key={`italic-${idx}`} className="italic text-zinc-300">
+          {renderInlineMarkdown(part.slice(1, -1))}
         </em>
       )
+      continue
     }
-    // Link [text](url)
+
+    // 4. Markdown link [text](url)
     const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/)
     if (linkMatch) {
-      return (
+      const isAnchor = linkMatch[2].startsWith('#')
+      result.push(
         <a
-          key={idx}
+          key={`link-${idx}`}
           href={linkMatch[2]}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-zinc-200 underline underline-offset-2 hover:text-white transition-colors"
+          target={isAnchor ? undefined : '_blank'}
+          rel={isAnchor ? undefined : 'noopener noreferrer'}
+          className="text-zinc-200 underline underline-offset-2 hover:text-white transition-colors cursor-pointer"
         >
-          {linkMatch[1]}
+          {renderInlineMarkdown(linkMatch[1])}
         </a>
       )
+      continue
     }
-    return part
-  })
+
+    // 5. HTML anchor <a ...>...</a>
+    const htmlAnchorMatch = part.match(/^<a\s+([^>]*?)>(.*?)<\/a>$/i)
+    if (htmlAnchorMatch) {
+      const attrs = htmlAnchorMatch[1]
+      const innerContent = htmlAnchorMatch[2]
+      const idMatch = attrs.match(/(?:id|name)=["']([^"']+)["']/i)
+      const hrefMatch = attrs.match(/href=["']([^"']+)["']/i)
+
+      if (hrefMatch) {
+        result.push(
+          <a
+            key={`a-${idx}`}
+            id={idMatch ? idMatch[1] : undefined}
+            href={hrefMatch[1]}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-zinc-200 underline underline-offset-2 hover:text-white transition-colors cursor-pointer"
+          >
+            {renderInlineMarkdown(innerContent)}
+          </a>
+        )
+      } else if (idMatch) {
+        result.push(
+          <span key={`a-id-${idx}`} id={idMatch[1]} className="scroll-mt-20">
+            {renderInlineMarkdown(innerContent)}
+          </span>
+        )
+      } else if (innerContent) {
+        result.push(...renderInlineMarkdown(innerContent))
+      }
+      continue
+    }
+
+    // 6. Solo/Opening anchor <a id="...">
+    const soloAnchorMatch = part.match(/^<a\s+(?:id|name)=["']([^"']+)["'][^>]*\/?>$/i)
+    if (soloAnchorMatch) {
+      result.push(<span key={`anchor-${idx}`} id={soloAnchorMatch[1]} className="scroll-mt-20" />)
+      continue
+    }
+
+    // 7. Closing </a>
+    if (/^<\/a>$/i.test(part)) {
+      continue
+    }
+
+    // 8. HTML <code>...</code>
+    const htmlCodeMatch = part.match(/^<code(?:\s+[^>]*)?>([\s\S]*?)<\/code>$/i)
+    if (htmlCodeMatch) {
+      result.push(
+        <code
+          key={`code-tag-${idx}`}
+          className="font-mono text-[11px] bg-zinc-900/90 text-zinc-200 px-1.5 py-0.5 rounded border border-zinc-800"
+        >
+          {htmlCodeMatch[1]}
+        </code>
+      )
+      continue
+    }
+
+    // 9. HTML <span>...</span>
+    const htmlSpanMatch = part.match(/^<span(?:\s+[^>]*)?>([\s\S]*?)<\/span>$/i)
+    if (htmlSpanMatch) {
+      result.push(<span key={`span-${idx}`}>{renderInlineMarkdown(htmlSpanMatch[1])}</span>)
+      continue
+    }
+
+    // 10. Line breaks <br> / <br/>
+    if (/^<br\s*\/?>$/i.test(part)) {
+      result.push(<br key={`br-${idx}`} />)
+      continue
+    }
+
+    // 11. Any other stray HTML tag
+    if (/^<[^>]+>$/.test(part)) {
+      continue
+    }
+
+    // 12. Styled severity token [CRITICAL], [HIGH], [MEDIUM], [LOW], [INFO]
+    const badgeMatch = part.match(/^\[(CRITICAL|HIGH|MEDIUM|LOW|INFO)\]$/i)
+    if (badgeMatch) {
+      const sev = badgeMatch[1].toUpperCase()
+      const colorCls =
+        sev === 'CRITICAL'
+          ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+          : sev === 'HIGH'
+          ? 'bg-orange-500/15 text-orange-300 border-orange-500/30'
+          : sev === 'MEDIUM'
+          ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+          : sev === 'LOW'
+          ? 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+          : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+
+      result.push(
+        <span
+          key={`badge-${idx}`}
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border ${colorCls} mr-1.5 select-none`}
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-current" />
+          {sev}
+        </span>
+      )
+      continue
+    }
+
+    // 13. Plain text
+    result.push(part)
+  }
+
+  return result
 }
 
 interface CompiledMarkdownReportProps {
@@ -91,6 +236,8 @@ interface CompiledMarkdownReportProps {
 }
 
 function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
+  if (!markdown) return null
+
   const rawLines = markdown.split('\n')
   const elements: React.ReactNode[] = []
 
@@ -98,10 +245,17 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
   let keyIndex = 0
 
   while (i < rawLines.length) {
+    const startI = i
     const rawLine = rawLines[i]
     const trimmed = rawLine.trim()
 
-    // 1. Fenced code block (```javascript, ```typescript, ```)
+    // 1. Empty lines
+    if (!trimmed) {
+      i++
+      continue
+    }
+
+    // 2. Fenced code block (```javascript, ```typescript, ```)
     if (trimmed.startsWith('```')) {
       const langMatch = trimmed.match(/^```([a-zA-Z0-9_-]*)/)
       const lang = langMatch && langMatch[1] ? langMatch[1] : 'javascript'
@@ -111,7 +265,9 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
         codeLines.push(rawLines[i])
         i++
       }
-      i++ // skip closing fence
+      if (i < rawLines.length && rawLines[i].trim().startsWith('```')) {
+        i++ // skip closing fence
+      }
 
       elements.push(
         <div key={`code-${keyIndex++}`} className="my-4">
@@ -122,12 +278,6 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
           />
         </div>
       )
-      continue
-    }
-
-    // 2. Empty line
-    if (!trimmed) {
-      i++
       continue
     }
 
@@ -230,9 +380,9 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
     }
 
     // 5. Markdown Tables (| Header | Header |)
-    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+    if (trimmed.startsWith('|')) {
       const tableLines: string[] = []
-      while (i < rawLines.length && rawLines[i].trim().startsWith('|') && rawLines[i].trim().endsWith('|')) {
+      while (i < rawLines.length && rawLines[i].trim().startsWith('|')) {
         tableLines.push(rawLines[i].trim())
         i++
       }
@@ -240,13 +390,15 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
       if (tableLines.length >= 2) {
         const headerRow = tableLines[0]
           .split('|')
-          .slice(1, -1)
+          .slice(1, tableLines[0].endsWith('|') ? -1 : undefined)
           .map(c => c.trim())
 
-        const bodyRows = tableLines.slice(2).map(row =>
+        // Skip separator line (|---|---|) if present
+        const startBodyIdx = tableLines.length > 1 && /^\|?\s*[-:]+[-| :]*\|?$/.test(tableLines[1]) ? 2 : 1
+        const bodyRows = tableLines.slice(startBodyIdx).map(row =>
           row
             .split('|')
-            .slice(1, -1)
+            .slice(1, row.endsWith('|') ? -1 : undefined)
             .map(c => c.trim())
         )
 
@@ -276,72 +428,69 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
             </table>
           </div>
         )
-        continue
       }
-    }
-
-    // 6. Headings
-    if (trimmed.startsWith('# ')) {
-      elements.push(
-        <h1
-          key={`h1-${keyIndex++}`}
-          className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-100 pb-3 border-b border-zinc-800/80 mb-6 mt-4"
-        >
-          {renderInlineMarkdown(trimmed.replace(/^#\s+/, ''))}
-        </h1>
-      )
-      i++
       continue
     }
 
-    if (trimmed.startsWith('## ')) {
-      elements.push(
-        <h2
-          key={`h2-${keyIndex++}`}
-          className="text-lg font-semibold tracking-tight text-zinc-100 mt-8 mb-3 pb-2 border-b border-zinc-800/60"
-        >
-          {renderInlineMarkdown(trimmed.replace(/^##\s+/, ''))}
-        </h2>
-      )
-      i++
-      continue
-    }
+    // 6. Headings (# -> ######)
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/)
+    if (headingMatch) {
+      const level = headingMatch[1].length
+      const headingRaw = headingMatch[2]
+      const anchorMatch = headingRaw.match(/(?:id|name)=["']([^"']+)["']/i)
+      const cleanHeading = headingRaw.replace(/<a\s+[^>]*>.*?<\/a>|<a\s+[^>]*\/?>|<\/a>/gi, '').trim()
+      const slugId = anchorMatch ? anchorMatch[1] : cleanHeading.toLowerCase().replace(/[^a-z0-9_-]+/g, '-')
 
-    if (trimmed.startsWith('### ')) {
-      elements.push(
-        <h3
-          key={`h3-${keyIndex++}`}
-          className="text-base font-semibold text-zinc-100 tracking-tight mt-7 mb-2 pb-1.5 border-b border-zinc-800/40"
-        >
-          {renderInlineMarkdown(trimmed.replace(/^###\s+/, ''))}
-        </h3>
-      )
-      i++
-      continue
-    }
-
-    if (trimmed.startsWith('#### ')) {
-      elements.push(
-        <h4
-          key={`h4-${keyIndex++}`}
-          className="text-xs font-mono font-semibold uppercase tracking-wider text-zinc-400 mt-4 mb-1.5"
-        >
-          {renderInlineMarkdown(trimmed.replace(/^####\s+/, ''))}
-        </h4>
-      )
-      i++
-      continue
-    }
-
-    if (trimmed.startsWith('##### ')) {
-      elements.push(
-        <h5
-          key={`h5-${keyIndex++}`}
-          className="text-xs font-medium text-zinc-400 mt-3 mb-1"
-        >
-          {renderInlineMarkdown(trimmed.replace(/^#####\s+/, ''))}
-        </h5>
-      )
+      if (level === 1) {
+        elements.push(
+          <h1
+            key={`h1-${keyIndex++}`}
+            id={slugId}
+            className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-100 pb-3 border-b border-zinc-800/80 mb-6 mt-4 flex items-center gap-3"
+          >
+            <RiShieldCheckLine className="w-6 h-6 text-rose-400 shrink-0" />
+            <span>{renderInlineMarkdown(cleanHeading)}</span>
+          </h1>
+        )
+      } else if (level === 2) {
+        elements.push(
+          <h2
+            key={`h2-${keyIndex++}`}
+            id={slugId}
+            className="text-lg font-semibold tracking-tight text-zinc-100 mt-8 mb-3 pb-2 border-b border-zinc-800/60 scroll-mt-20 flex items-center gap-2"
+          >
+            {renderInlineMarkdown(cleanHeading)}
+          </h2>
+        )
+      } else if (level === 3) {
+        elements.push(
+          <h3
+            key={`h3-${keyIndex++}`}
+            id={slugId}
+            className="text-base font-semibold text-zinc-100 tracking-tight mt-7 mb-2 pb-1.5 border-b border-zinc-800/40 scroll-mt-20 flex flex-wrap items-center gap-2"
+          >
+            {renderInlineMarkdown(cleanHeading)}
+          </h3>
+        )
+      } else if (level === 4) {
+        elements.push(
+          <h4
+            key={`h4-${keyIndex++}`}
+            className="text-xs font-mono font-semibold uppercase tracking-wider text-zinc-400 mt-5 mb-1.5 flex items-center gap-1.5"
+          >
+            {renderInlineMarkdown(cleanHeading)}
+          </h4>
+        )
+      } else {
+        elements.push(
+          <h5
+            key={`h5-${keyIndex++}`}
+            className="text-xs font-medium text-zinc-400 mt-3 mb-1"
+          >
+            {renderInlineMarkdown(cleanHeading)}
+          </h5>
+        )
+      }
       i++
       continue
     }
@@ -391,13 +540,13 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
       continue
     }
 
-    // 9. Regular paragraph
+    // 9. Regular paragraph (groups consecutive non-empty lines)
     const paragraphLines: string[] = []
     while (
       i < rawLines.length &&
       rawLines[i].trim() &&
       !rawLines[i].trim().startsWith('```') &&
-      !rawLines[i].trim().startsWith('#') &&
+      !rawLines[i].trim().match(/^#{1,6}\s+/) &&
       !rawLines[i].trim().startsWith('>') &&
       !rawLines[i].trim().startsWith('|') &&
       !/^(\*\*\*|---|___)$/.test(rawLines[i].trim()) &&
@@ -418,6 +567,19 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
         </p>
       )
     }
+
+    // Safety fallback: guarantee loop advances if no rule matched
+    if (i === startI) {
+      elements.push(
+        <p
+          key={`p-fallback-${keyIndex++}`}
+          className="text-xs sm:text-sm text-zinc-300 leading-relaxed font-sans my-2"
+        >
+          {renderInlineMarkdown(rawLines[i])}
+        </p>
+      )
+      i++
+    }
   }
 
   return <div className="space-y-1">{elements}</div>
@@ -428,6 +590,7 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
   const { confirm } = useConfirm()
 
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [scan, setScan] = useState<ScanItem | null>(null)
   const [allRepoScans, setAllRepoScans] = useState<ScanItem[]>([])
   const [reportMode, setReportMode] = useState<'branch' | 'full'>('branch')
@@ -438,10 +601,12 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
   const [selectedFindingForFix, setSelectedFindingForFix] = useState<FindingWithBranch | null>(null)
   const [isFixModalOpen, setIsFixModalOpen] = useState(false)
   const [copiedMd, setCopiedMd] = useState(false)
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
 
   // Fetch scan details and sibling repository scans
   const loadReportData = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const { scan: fetchedScan } = await scanApi.getById(scanId)
       setScan(fetchedScan)
@@ -456,6 +621,7 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load report'
+      setLoadError(msg)
       error(msg, 'Error')
     } finally {
       setLoading(false)
@@ -580,11 +746,48 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
     if (reportMode === 'branch') {
       const sanitizedBranch = scan.branch.replace(/[^a-zA-Z0-9_-]/g, '_')
       downloadMarkdownFile(`vulscan-report-${sanitizedRepo}-${sanitizedBranch}.md`, reportMarkdown)
-      info(`Branch report exported for ${scan.branch}`, 'Exported')
+      info(`Branch report exported as Markdown for ${scan.branch}`, 'Exported')
     } else {
       downloadMarkdownFile(`vulscan-full-report-${sanitizedRepo}.md`, reportMarkdown)
-      info(`Consolidated report exported (${allRepoScans.length} branches)`, 'Exported')
+      info(`Consolidated report exported as Markdown (${allRepoScans.length} branches)`, 'Exported')
     }
+    setExportMenuOpen(false)
+  }
+
+  // Handle Standalone HTML Report Download
+  const handleExportHtml = () => {
+    if (!scan) return
+
+    const sanitizedRepo = (scan.repoName || 'repo').replace(/[^a-zA-Z0-9_-]/g, '_')
+    if (reportMode === 'branch') {
+      const sanitizedBranch = scan.branch.replace(/[^a-zA-Z0-9_-]/g, '_')
+      const html = generateBranchHtmlReport(scan)
+      downloadHtmlFile(`vulscan-report-${sanitizedRepo}-${sanitizedBranch}.html`, html)
+      info(`Branch report exported as standalone HTML for ${scan.branch}`, 'Exported')
+    } else {
+      const html = generateFullRepoHtmlReport(scan.repoName || scan.repoUrl, scan.repoUrl, allRepoScans)
+      downloadHtmlFile(`vulscan-full-report-${sanitizedRepo}.html`, html)
+      info(`Consolidated report exported as standalone HTML (${allRepoScans.length} branches)`, 'Exported')
+    }
+    setExportMenuOpen(false)
+  }
+
+  // Handle JSON Report Download
+  const handleExportJson = () => {
+    if (!scan) return
+
+    const sanitizedRepo = (scan.repoName || 'repo').replace(/[^a-zA-Z0-9_-]/g, '_')
+    if (reportMode === 'branch') {
+      const sanitizedBranch = scan.branch.replace(/[^a-zA-Z0-9_-]/g, '_')
+      const json = generateBranchJsonReport(scan)
+      downloadJsonFile(`vulscan-report-${sanitizedRepo}-${sanitizedBranch}.json`, json)
+      info(`Branch report exported as JSON for ${scan.branch}`, 'Exported')
+    } else {
+      const json = generateFullRepoJsonReport(scan.repoName || scan.repoUrl, scan.repoUrl, allRepoScans)
+      downloadJsonFile(`vulscan-full-report-${sanitizedRepo}.json`, json)
+      info(`Consolidated report exported as JSON (${allRepoScans.length} branches)`, 'Exported')
+    }
+    setExportMenuOpen(false)
   }
 
   // Copy raw markdown to clipboard
@@ -617,9 +820,37 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
     )
   }
 
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col items-center justify-center p-6 space-y-4 font-sans">
+        <div className="p-5 rounded-xl bg-red-950/20 border border-red-900/40 text-red-300 max-w-md text-center space-y-2">
+          <div className="flex items-center justify-center gap-2 text-red-400 font-semibold text-sm">
+            <RiAlertLine className="w-4 h-4" />
+            <span>Unable to load scan report</span>
+          </div>
+          <p className="text-xs text-zinc-400 font-mono">{loadError}</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => loadReportData()}
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-mono rounded-lg transition-colors cursor-pointer"
+          >
+            Retry Loading
+          </button>
+          <button
+            onClick={onBack}
+            className="px-4 py-2 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-xs font-mono rounded-lg transition-colors cursor-pointer"
+          >
+            Back to Dashboard
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   if (!scan) {
     return (
-      <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col items-center justify-center p-6">
+      <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col items-center justify-center p-6 font-sans">
         <p className="text-sm text-zinc-400 font-mono">Scan record not found.</p>
         <button
           onClick={onBack}
@@ -735,15 +966,49 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={handleExportMarkdown}
-              className="text-xs font-mono text-zinc-300 hover:text-white bg-zinc-900/80 border border-zinc-800 hover:bg-zinc-800 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
-              title="Download markdown report file"
-            >
-              <RiDownloadLine className="w-3.5 h-3.5 text-zinc-400" />
-              <span className="hidden lg:inline">Export</span>
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setExportMenuOpen(!exportMenuOpen)}
+                className="text-xs font-mono text-zinc-300 hover:text-white bg-zinc-900/80 border border-zinc-800 hover:bg-zinc-800 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                title="Export report in various formats"
+              >
+                <RiDownloadLine className="w-3.5 h-3.5 text-zinc-400" />
+                <span className="hidden lg:inline">Export</span>
+              </button>
+
+              {exportMenuOpen && (
+                <div
+                  className="absolute right-0 mt-2 w-48 py-1.5 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl z-50 flex flex-col font-mono text-xs animate-in fade-in slide-in-from-top-1 duration-150"
+                  onMouseLeave={() => setExportMenuOpen(false)}
+                >
+                  <button
+                    type="button"
+                    onClick={handleExportHtml}
+                    className="px-3 py-2 text-left text-zinc-300 hover:text-white hover:bg-zinc-800/80 flex items-center justify-between transition-colors cursor-pointer"
+                  >
+                    <span>HTML (.html)</span>
+                    <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">Dashboard</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportMarkdown}
+                    className="px-3 py-2 text-left text-zinc-300 hover:text-white hover:bg-zinc-800/80 flex items-center justify-between transition-colors cursor-pointer"
+                  >
+                    <span>Markdown (.md)</span>
+                    <span className="text-[10px] text-zinc-400 bg-zinc-800 px-1.5 py-0.5 rounded">GFM</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportJson}
+                    className="px-3 py-2 text-left text-zinc-300 hover:text-white hover:bg-zinc-800/80 flex items-center justify-between transition-colors cursor-pointer"
+                  >
+                    <span>JSON (.json)</span>
+                    <span className="text-[10px] text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded border border-cyan-500/20">Schema 1.0</span>
+                  </button>
+                </div>
+              )}
+            </div>
 
             <button
               type="button"
@@ -759,17 +1024,17 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
 
       {/* Main Full-Width Document Body */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-6 sm:px-12 py-8 space-y-8">
-        {/* Document Top Action & Filter Ribbon (Naturally spaced with breathing room) */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-zinc-800/60">
-          {/* Segmented Filter Control */}
-          <div className="flex flex-wrap items-center gap-1 p-1 bg-zinc-900/80 border border-zinc-800/80 rounded-xl text-xs font-mono">
+        {/* Document Top Action & Filter Ribbon */}
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-0 border-b border-zinc-800">
+          {/* Underline Filter Control */}
+          <div className="flex flex-wrap items-center gap-6 text-xs font-mono">
             <button
               type="button"
               onClick={() => setSeverityFilter('ALL')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
                 severityFilter === 'ALL'
-                  ? 'bg-zinc-800 text-zinc-100 font-medium shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200'
+                  ? 'border-zinc-100 text-zinc-100 font-semibold'
+                  : 'border-transparent text-zinc-400 hover:text-zinc-200'
               }`}
             >
               All ({displayedFindings.length})
@@ -777,10 +1042,10 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
             <button
               type="button"
               onClick={() => setSeverityFilter('HIGH_CRITICAL')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
                 severityFilter === 'HIGH_CRITICAL'
-                  ? 'bg-rose-500/15 text-rose-300 font-medium border border-rose-500/30 shadow-sm'
-                  : 'text-zinc-400 hover:text-rose-400'
+                  ? 'border-rose-400 text-rose-300 font-semibold'
+                  : 'border-transparent text-zinc-400 hover:text-rose-400'
               }`}
             >
               High/Crit ({highCriticalCount})
@@ -788,24 +1053,24 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
             <button
               type="button"
               onClick={() => setSeverityFilter('MEDIUM')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
                 severityFilter === 'MEDIUM'
-                  ? 'bg-amber-500/15 text-amber-300 font-medium border border-amber-500/30 shadow-sm'
-                  : 'text-zinc-400 hover:text-amber-400'
+                  ? 'border-amber-400 text-amber-300 font-semibold'
+                  : 'border-transparent text-zinc-400 hover:text-amber-400'
               }`}
             >
               Medium ({mediumCount})
             </button>
 
-            <div className="w-px h-4 bg-zinc-800 mx-1" />
+            <span className="text-zinc-700 select-none pb-3">|</span>
 
             <button
               type="button"
               onClick={() => setStatusFilter(statusFilter === 'CONFIRMED' ? 'ALL' : 'CONFIRMED')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
                 statusFilter === 'CONFIRMED'
-                  ? 'bg-zinc-800 text-zinc-100 font-medium shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200'
+                  ? 'border-emerald-400 text-emerald-300 font-semibold'
+                  : 'border-transparent text-zinc-400 hover:text-emerald-400'
               }`}
             >
               Confirmed ({verifiedCount})
@@ -813,10 +1078,10 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
             <button
               type="button"
               onClick={() => setStatusFilter(statusFilter === 'FALSE_POSITIVES' ? 'ALL' : 'FALSE_POSITIVES')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
                 statusFilter === 'FALSE_POSITIVES'
-                  ? 'bg-zinc-800 text-zinc-100 font-medium shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200'
+                  ? 'border-zinc-400 text-zinc-300 font-semibold'
+                  : 'border-transparent text-zinc-500 hover:text-zinc-300'
               }`}
             >
               False Positives ({falsePositiveCount})
@@ -825,7 +1090,7 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
 
           {/* Prominent Fix & PR Button */}
           {totalCount > 0 && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 pb-2.5">
               <button
                 type="button"
                 onClick={handleOpenFixModal}

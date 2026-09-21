@@ -12,7 +12,7 @@ function getOllamaClient(): ChatOllama {
       baseUrl: config.ollamaBaseUrl,
       temperature: 0.1,
       format: 'json',
-      numPredict: 2048,
+      numPredict: 350,
     })
   }
   return ollamaClient
@@ -185,7 +185,7 @@ ${contextCode}
 Perform a comprehensive security audit of this finding. Output your verdict and full markdown analysis.`
 
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 40000)
+    const timeoutId = setTimeout(() => controller.abort(), 12000)
 
     const res = await fetch(`${config.ollamaBaseUrl}/api/chat`, {
       method: 'POST',
@@ -199,7 +199,7 @@ Perform a comprehensive security audit of this finding. Output your verdict and 
         stream: false,
         options: {
           temperature: 0.1,
-          num_predict: 2048,
+          num_predict: 350,
         },
       }),
       signal: controller.signal,
@@ -267,8 +267,8 @@ Perform a comprehensive security audit of this finding. Output your verdict and 
       verdict: 'CONFIRMED_VULNERABILITY',
       confidence: 70,
       isFalsePositive: false,
-      analysis: `### Security Finding\nDeterministic AST analysis identified dynamic taint flow reaching dangerous sink \`${finding.sink}\` at \`${finding.filePath}:${finding.line}\` without contextual sanitization or safe type conversion.`,
-      reason: `Deterministic AST analysis identified dynamic taint flow reaching dangerous sink '${finding.sink}' at ${finding.filePath}:${finding.line}. Flagged for security review.`,
+      analysis: `### Security Finding\nStatic analysis identified dynamic taint flow reaching dangerous sink \`${finding.sink}\` at \`${finding.filePath}:${finding.line}\` without contextual sanitization or safe type conversion.`,
+      reason: `Static analysis identified dynamic taint flow reaching dangerous sink '${finding.sink}' at ${finding.filePath}:${finding.line}. Flagged for security review.`,
       remediation: finding.remediation,
       model: modelName,
       evaluatedAt: now,
@@ -277,12 +277,12 @@ Perform a comprehensive security audit of this finding. Output your verdict and 
 }
 
 /**
- * Validates a list of findings with controlled concurrency
+ * Validates findings with controlled concurrency and fast-path initial triage
  */
 export async function validateFindingsBatch(
   findings: Finding[],
   filesMap: Map<string, string>,
-  concurrency = 2
+  concurrency = 1
 ): Promise<Finding[]> {
   if (!config.aiValidationEnabled || findings.length === 0) {
     return findings
@@ -295,12 +295,28 @@ export async function validateFindingsBatch(
     return findings
   }
 
-  logger.info(`[AiValidator] Starting AI validation for ${findings.length} findings using model '${config.aiModel}' (concurrency: ${concurrency})`)
+  // To keep initial scans instant, prioritize top findings (CRITICAL/HIGH first) up to 5
+  const severityRank: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 }
+  const indexed = findings.map((finding, index) => ({
+    finding,
+    index,
+    score: severityRank[finding.severity] || 0,
+  }))
+
+  // Sort descending by severity
+  indexed.sort((a, b) => b.score - a.score)
+
+  // Cap automatic initial scan AI triage to top 5 findings
+  const toValidate = indexed.slice(0, 5)
+
+  logger.info(
+    `[AiValidator] Starting AI validation for ${toValidate.length}/${findings.length} prioritized findings using model '${config.aiModel}'`
+  )
 
   const enrichedFindings: Finding[] = [...findings]
-  const queue = findings.map((finding, index) => ({ finding, index }))
+  const queue = [...toValidate]
 
-  const workers = Array.from({ length: concurrency }, async () => {
+  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
     while (queue.length > 0) {
       const item = queue.shift()
       if (!item) break

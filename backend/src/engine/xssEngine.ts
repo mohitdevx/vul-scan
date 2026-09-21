@@ -38,6 +38,37 @@ const DANGEROUS_MARKDOWN_ENGINES = new Set([
   'showdown',
 ])
 
+const NON_DOM_OBJECT_NAMES = new Set([
+  'formdata',
+  'form',
+  'params',
+  'searchparams',
+  'urlsearchparams',
+  'headers',
+  'header',
+  'cookie',
+  'cookies',
+  'list',
+  'stack',
+  'arr',
+  'array',
+  'buffer',
+  'platformbuffer',
+  'platformformdata',
+  'this',
+  'self',
+  'res',
+  'req',
+  'response',
+  'request',
+  'reply',
+  'app',
+  'router',
+  'fs',
+  'path',
+  'stream',
+])
+
 export const xssEngine: SecurityEngine = {
   id: 'xss',
   name: 'Cross-Site Scripting (XSS) Engine',
@@ -170,7 +201,14 @@ export const xssEngine: SecurityEngine = {
           (left.object.name === 'document' || left.object.property?.name === 'document')
         ) {
           const taint = isDynamicOrTainted(right, scope)
-          if (taint.tainted) {
+          const lineContent = ctx.lines[left.loc?.start.line - 1] || ''
+          const fileContent = ctx.fileContent || ''
+          const isExplicitlyEncoded =
+            isSanitizedExpression(right) ||
+            lineContent.toLowerCase().includes('encodeuricomponent') ||
+            fileContent.toLowerCase().includes('encodeuricomponent')
+
+          if (taint.tainted && !isExplicitlyEncoded) {
             const line = left.loc?.start.line || 1
             const col = left.loc?.start.column || 1
             findings.push({
@@ -354,26 +392,32 @@ export const xssEngine: SecurityEngine = {
             callee.property?.name === 'after' ||
             callee.property?.name === 'before')
         ) {
-          const firstArg = args[0]
-          if (firstArg) {
-            const taint = isDynamicOrTainted(firstArg, scope)
-            if (taint.tainted && !isSanitizedExpression(firstArg)) {
-              const line = callee.loc?.start.line || 1
-              const col = callee.loc?.start.column || 1
-              findings.push({
-                id: `XSS-${counter++}`,
-                ruleId: 'ast/xss-jquery-html',
-                ruleName: 'Cross-Site Scripting via jQuery HTML Sink',
-                cwe: 'CWE-79',
-                severity: 'HIGH',
-                filePath: ctx.filePath,
-                line,
-                column: col,
-                snippet: extractSnippet(ctx.lines, line),
-                sink: `$(...).${callee.property.name}`,
-                message: `Unsanitized content injected into jQuery DOM manipulation sink '.${callee.property.name}()'.`,
-                remediation: `Use '$(...).text()' for plain text or sanitize input with 'DOMPurify.sanitize()' before calling .${callee.property.name}().`,
-              })
+          const objName = (callee.object?.name || callee.object?.property?.name || '').toLowerCase()
+          const isNonDom = NON_DOM_OBJECT_NAMES.has(objName)
+          const isMultiArgAppend = args.length >= 2 && callee.property?.name === 'append' // FormData/URLSearchParams take (key, val)
+
+          if (!isNonDom && !isMultiArgAppend) {
+            const firstArg = args[0]
+            if (firstArg) {
+              const taint = isDynamicOrTainted(firstArg, scope)
+              if (taint.tainted && !isSanitizedExpression(firstArg)) {
+                const line = callee.loc?.start.line || 1
+                const col = callee.loc?.start.column || 1
+                findings.push({
+                  id: `XSS-${counter++}`,
+                  ruleId: 'ast/xss-jquery-html',
+                  ruleName: 'Cross-Site Scripting via jQuery HTML Sink',
+                  cwe: 'CWE-79',
+                  severity: 'HIGH',
+                  filePath: ctx.filePath,
+                  line,
+                  column: col,
+                  snippet: extractSnippet(ctx.lines, line),
+                  sink: `$(...).${callee.property.name}`,
+                  message: `Unsanitized content injected into jQuery DOM manipulation sink '.${callee.property.name}()'.`,
+                  remediation: `Use '$(...).text()' for plain text or sanitize input with 'DOMPurify.sanitize()' before calling .${callee.property.name}().`,
+                })
+              }
             }
           }
         }

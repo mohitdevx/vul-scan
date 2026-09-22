@@ -135,7 +135,8 @@ describe('Reporting Engine Fixture Tests', () => {
     assert.equal(ir.summary.distribution.high, 1)
     assert.equal(ir.summary.posture, 'CRITICAL_RISK')
 
-    assert.ok(markdown.includes('2 CRITICAL-SEVERITY VULNERABILITIES FLAGGED'))
+    assert.ok(markdown.includes('## 1. Security Posture'))
+    assert.ok(markdown.includes('2 critical-severity findings identified.'))
     assert.ok(markdown.includes('SQL-002'))
     assert.ok(markdown.includes('CMD-003'))
     assert.ok(markdown.includes('XSS-001'))

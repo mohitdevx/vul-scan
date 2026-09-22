@@ -187,6 +187,7 @@ function AppContent() {
           <ReportPage
             scanId={inspectingScanId}
             onBack={() => navigateToView('dashboard')}
+            onNavigate={handleNavigate}
           />
         )}
 

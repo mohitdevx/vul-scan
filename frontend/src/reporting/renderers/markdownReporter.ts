@@ -22,23 +22,15 @@ export class MarkdownReporter implements ReportRenderer<string> {
 
     // Security Posture Section
     md += `## 1. Security Posture\n\n`
-    if (dist.critical > 0) {
-      md += `> [!CAUTION]\n`
-      md += `> **${dist.critical} CRITICAL-SEVERITY VULNERABILIT${dist.critical === 1 ? 'Y' : 'IES'} FLAGGED**\n`
-      md += `> Immediate remediation required. Exploit paths reach dangerous execution sinks without security boundaries.\n\n`
-    } else if (dist.high > 0) {
-      md += `> [!CAUTION]\n`
-      md += `> **${dist.high} HIGH-SEVERITY VULNERABILIT${dist.high === 1 ? 'Y' : 'IES'} DETECTED**\n`
-      md += `> Action required prior to deployment. Unsanitized user inputs flow into critical execution sinks.\n\n`
-    } else if (dist.medium > 0) {
-      md += `> [!WARNING]\n`
-      md += `> **${dist.medium} MEDIUM-SEVERITY FINDING${dist.medium === 1 ? '' : 'S'} IDENTIFIED**\n`
-      md += `> Review recommended. Certain application inputs require defense-in-depth sanitization.\n\n`
-    } else {
-      md += `> [!NOTE]\n`
-      md += `> **CLEAN POSTURE: ZERO VULNERABILITIES DETECTED**\n`
-      md += `> All evaluated execution sinks and data flows adhere to secure coding patterns.\n\n`
-    }
+    md += `**Overall Verdict:** \`${summary.statusVerdict}\` — ${
+      dist.critical > 0
+        ? `${dist.critical} critical-severity finding${dist.critical === 1 ? '' : 's'} identified.`
+        : dist.high > 0
+        ? `${dist.high} high-severity finding${dist.high === 1 ? '' : 's'} identified.`
+        : dist.medium > 0
+        ? `${dist.medium} medium-severity finding${dist.medium === 1 ? '' : 's'} identified.`
+        : `0 vulnerabilities identified across analyzed files.`
+    }\n\n`
 
     // Severity Distribution Table
     md += `### Severity Distribution\n\n`
@@ -49,8 +41,6 @@ export class MarkdownReporter implements ReportRenderer<string> {
     md += `| **MEDIUM** | ${dist.medium} | P2 — Hardening Required |\n`
     md += `| **LOW** | ${dist.low} | P3 — Hygiene / Best Practice |\n`
     md += `| **INFO** | ${dist.info} | P4 — Informational |\n\n`
-
-    md += `**Overall Verdict:** \`${summary.statusVerdict}\`\n\n`
     md += `---\n\n`
 
     // Executive Summary

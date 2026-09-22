@@ -1,14 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   RiArrowLeftLine,
-  RiFileTextLine,
-  RiCodeLine,
   RiDeleteBinLine,
   RiShieldCheckLine,
   RiGitBranchLine,
   RiGitPullRequestLine,
-  RiCheckLine,
-  RiFileCopyLine,
   RiSparklingLine,
   RiAlertLine,
   RiInformationLine,
@@ -19,6 +15,8 @@ import { useToast } from '../context/ToastContext'
 import { useConfirm } from '../context/ConfirmContext'
 import { CodeBlock } from '../components/atoms/CodeBlock'
 import { FixPrModal } from '../components/organisms/FixPrModal'
+import { Navbar } from '../components/organisms/Navbar'
+import { Button } from '../components/atoms/Button'
 import {
   generateBranchMarkdownReport,
   generateBranchHtmlReport,
@@ -34,6 +32,7 @@ import {
 interface ReportPageProps {
   scanId: string
   onBack: () => void
+  onNavigate?: (view: 'home' | 'dashboard' | 'profile') => void
 }
 
 interface FindingWithBranch extends FindingItem {
@@ -317,15 +316,14 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
         elements.push(
           <div
             key={`alert-${keyIndex++}`}
-            className="my-4 p-4 rounded-xl bg-rose-500/[0.06] border border-rose-500/20 text-rose-200 text-xs leading-relaxed space-y-2"
+            className="my-4 p-4 rounded-lg bg-rose-500/[0.04] border border-rose-500/20 text-text-primary text-xs leading-relaxed flex items-start gap-3"
           >
-            <div className="flex items-center gap-2 font-mono font-semibold text-rose-400 text-xs uppercase tracking-wider">
-              <RiAlertLine className="w-4 h-4 text-rose-400 shrink-0" />
-              <span>Security Warning</span>
-            </div>
-            <div className="text-zinc-300 space-y-1">
+            <RiAlertLine className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            <div className="space-y-1 flex-1 text-text-secondary">
               {cleanLines.map((line, lIdx) => (
-                <p key={lIdx}>{renderInlineMarkdown(line)}</p>
+                <p key={lIdx} className={lIdx === 0 ? 'font-medium text-text-primary' : ''}>
+                  {renderInlineMarkdown(line)}
+                </p>
               ))}
             </div>
           </div>
@@ -334,15 +332,14 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
         elements.push(
           <div
             key={`alert-${keyIndex++}`}
-            className="my-4 p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20 text-emerald-200 text-xs leading-relaxed space-y-2"
+            className="my-4 p-4 rounded-lg bg-emerald-500/[0.04] border border-emerald-500/20 text-text-primary text-xs leading-relaxed flex items-start gap-3"
           >
-            <div className="flex items-center gap-2 font-mono font-semibold text-emerald-400 text-xs uppercase tracking-wider">
-              <RiShieldCheckLine className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Clean Audit Posture</span>
-            </div>
-            <div className="text-zinc-300 space-y-1">
+            <RiShieldCheckLine className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            <div className="space-y-1 flex-1 text-text-secondary">
               {cleanLines.map((line, lIdx) => (
-                <p key={lIdx}>{renderInlineMarkdown(line)}</p>
+                <p key={lIdx} className={lIdx === 0 ? 'font-medium text-text-primary' : ''}>
+                  {renderInlineMarkdown(line)}
+                </p>
               ))}
             </div>
           </div>
@@ -351,15 +348,14 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
         elements.push(
           <div
             key={`alert-${keyIndex++}`}
-            className="my-4 p-4 rounded-xl bg-cyan-500/[0.06] border border-cyan-500/20 text-cyan-200 text-xs leading-relaxed space-y-2"
+            className="my-4 p-4 rounded-lg bg-cyan-500/[0.04] border border-cyan-500/20 text-text-primary text-xs leading-relaxed flex items-start gap-3"
           >
-            <div className="flex items-center gap-2 font-mono font-semibold text-cyan-400 text-xs uppercase tracking-wider">
-              <RiInformationLine className="w-4 h-4 text-cyan-400 shrink-0" />
-              <span>Security Guidance</span>
-            </div>
-            <div className="text-zinc-300 space-y-1">
+            <RiInformationLine className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+            <div className="space-y-1 flex-1 text-text-secondary">
               {cleanLines.map((line, lIdx) => (
-                <p key={lIdx}>{renderInlineMarkdown(line)}</p>
+                <p key={lIdx} className={lIdx === 0 ? 'font-medium text-text-primary' : ''}>
+                  {renderInlineMarkdown(line)}
+                </p>
               ))}
             </div>
           </div>
@@ -368,7 +364,7 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
         elements.push(
           <blockquote
             key={`quote-${keyIndex++}`}
-            className="border-l-2 border-zinc-700 bg-zinc-900/40 pl-4 py-2 my-3 text-xs text-zinc-300 italic rounded-r leading-relaxed"
+            className="border-l-2 border-border-subtle bg-surface/30 pl-4 py-2 my-3 text-xs text-text-secondary italic rounded-r leading-relaxed"
           >
             {quoteLines.map((line, lIdx) => (
               <p key={lIdx}>{renderInlineMarkdown(line)}</p>
@@ -585,7 +581,7 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
   return <div className="space-y-1">{elements}</div>
 }
 
-export function ReportPage({ scanId, onBack }: ReportPageProps) {
+export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
   const { success, error, info } = useToast()
   const { confirm } = useConfirm()
 
@@ -594,13 +590,11 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
   const [scan, setScan] = useState<ScanItem | null>(null)
   const [allRepoScans, setAllRepoScans] = useState<ScanItem[]>([])
   const [reportMode, setReportMode] = useState<'branch' | 'full'>('branch')
-  const [viewMode, setViewMode] = useState<'rendered' | 'raw'>('rendered')
   const [severityFilter, setSeverityFilter] = useState<'ALL' | 'HIGH_CRITICAL' | 'MEDIUM'>('ALL')
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'CONFIRMED' | 'FALSE_POSITIVES'>('ALL')
   const [isRevalidating, setIsRevalidating] = useState(false)
   const [selectedFindingForFix, setSelectedFindingForFix] = useState<FindingWithBranch | null>(null)
   const [isFixModalOpen, setIsFixModalOpen] = useState(false)
-  const [copiedMd, setCopiedMd] = useState(false)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
 
   // Fetch scan details and sibling repository scans
@@ -790,14 +784,6 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
     setExportMenuOpen(false)
   }
 
-  // Copy raw markdown to clipboard
-  const handleCopyMarkdown = () => {
-    navigator.clipboard.writeText(reportMarkdown)
-    setCopiedMd(true)
-    setTimeout(() => setCopiedMd(false), 2000)
-    success('Markdown report copied to clipboard', 'Copied')
-  }
-
   // Handle Fix & PR trigger from toolbar
   const handleOpenFixModal = () => {
     const target = filteredFindings[0] || displayedFindings[0]
@@ -811,10 +797,11 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#09090b] text-zinc-100 flex items-center justify-center p-6">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-5 h-5 border-2 border-zinc-700 border-t-zinc-200 rounded-full animate-spin" />
-          <p className="text-xs font-mono text-zinc-500">Compiling security audit report...</p>
+      <div className="min-h-screen bg-canvas text-text-primary flex flex-col font-sans">
+        <Navbar onNavigate={onNavigate || (() => onBack())} currentView="report" />
+        <div className="flex-1 flex flex-col items-center justify-center gap-3">
+          <div className="w-5 h-5 border-2 border-border border-t-text-primary rounded-full animate-spin" />
+          <span className="text-xs font-mono text-text-muted">Loading security audit report...</span>
         </div>
       </div>
     )
@@ -822,27 +809,29 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
 
   if (loadError) {
     return (
-      <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col items-center justify-center p-6 space-y-4 font-sans">
-        <div className="p-5 rounded-xl bg-red-950/20 border border-red-900/40 text-red-300 max-w-md text-center space-y-2">
-          <div className="flex items-center justify-center gap-2 text-red-400 font-semibold text-sm">
-            <RiAlertLine className="w-4 h-4" />
-            <span>Unable to load scan report</span>
+      <div className="min-h-screen bg-canvas text-text-primary flex flex-col font-sans">
+        <Navbar onNavigate={onNavigate || (() => onBack())} currentView="report" />
+        <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-4">
+          <div className="p-5 rounded-lg bg-danger/10 border border-danger/20 text-danger max-w-md text-center space-y-2">
+            <div className="flex items-center justify-center gap-2 font-medium text-sm">
+              <RiAlertLine className="w-4 h-4" />
+              <span>Unable to load scan report</span>
+            </div>
+            <p className="text-xs text-text-muted font-mono">{loadError}</p>
           </div>
-          <p className="text-xs text-zinc-400 font-mono">{loadError}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => loadReportData()}
-            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-mono rounded-lg transition-colors cursor-pointer"
-          >
-            Retry Loading
-          </button>
-          <button
-            onClick={onBack}
-            className="px-4 py-2 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-xs font-mono rounded-lg transition-colors cursor-pointer"
-          >
-            Back to Dashboard
-          </button>
+          <div className="flex items-center gap-3">
+            <Button variant="secondary" size="sm" onClick={() => loadReportData()}>
+              Retry
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onBack}
+              icon={<RiArrowLeftLine className="w-3.5 h-3.5" />}
+            >
+              Back to Dashboard
+            </Button>
+          </div>
         </div>
       </div>
     )
@@ -850,14 +839,19 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
 
   if (!scan) {
     return (
-      <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col items-center justify-center p-6 font-sans">
-        <p className="text-sm text-zinc-400 font-mono">Scan record not found.</p>
-        <button
-          onClick={onBack}
-          className="mt-4 px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-xs text-zinc-300 hover:text-white transition-colors cursor-pointer"
-        >
-          Back to Dashboard
-        </button>
+      <div className="min-h-screen bg-canvas text-text-primary flex flex-col font-sans">
+        <Navbar onNavigate={onNavigate || (() => onBack())} currentView="report" />
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-4">
+          <p className="text-sm text-text-secondary font-mono">Scan record not found or has been deleted.</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onBack}
+            icon={<RiArrowLeftLine className="w-3.5 h-3.5" />}
+          >
+            Back to Dashboard
+          </Button>
+        </div>
       </div>
     )
   }
@@ -875,111 +869,69 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
   ).length
 
   return (
-    <div className="min-h-screen bg-[#09090b] text-zinc-100 selection:bg-rose-500/20 font-sans antialiased flex flex-col">
-      {/* Top Sticky Header */}
-      <header className="sticky top-0 z-30 bg-canvas/90 backdrop-blur-md px-4 sm:px-8 py-2.5">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-6">
-          {/* Breadcrumb Navigation */}
-          <div className="flex items-center gap-2.5 text-xs font-mono min-w-0">
-            <button
-              onClick={onBack}
-              className="group flex items-center gap-1.5 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer shrink-0"
-            >
-              <RiArrowLeftLine className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
-              <span>Dashboard</span>
-            </button>
-            <span className="text-zinc-700 select-none">/</span>
-            <span className="text-zinc-200 font-medium truncate max-w-[160px] sm:max-w-[220px]">
-              {scan.repoName || scan.repoUrl}
-            </span>
-          </div>
+    <div className="min-h-screen bg-canvas text-text-primary selection:bg-rose-500/20 font-sans antialiased flex flex-col">
+      {/* Primary Application Navbar */}
+      <Navbar onNavigate={onNavigate || (() => onBack())} currentView="report" />
 
-          {/* Mode Switcher (Branch vs All Branches) - Underline Tabs */}
+      {/* Main Document Container with generous spacing from navbar */}
+      <main className="flex-1 max-w-5xl w-full mx-auto px-6 sm:px-12 pt-8 pb-16 space-y-8">
+        {/* Report Top Toolbar */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-border-subtle">
+          {/* Branch Switcher Underline Tabs */}
           <div className="flex items-center gap-6 text-xs font-mono">
             <button
               type="button"
               onClick={() => setReportMode('branch')}
-              className={`flex items-center gap-1.5 pb-1 transition-all cursor-pointer border-b-2 -mb-px ${
+              className={`inline-flex items-center gap-1.5 pb-2 -mb-[13px] transition-colors cursor-pointer border-b-2 ${
                 reportMode === 'branch'
-                  ? 'border-zinc-100 text-zinc-100 font-semibold'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                  ? 'border-text-primary text-text-primary font-medium'
+                  : 'border-transparent text-text-muted hover:text-text-secondary'
               }`}
             >
-              <RiGitBranchLine className="w-3.5 h-3.5" />
+              <RiGitBranchLine className="w-3.5 h-3.5 text-text-muted shrink-0" />
               <span>{scan.branch}</span>
             </button>
             <button
               type="button"
               onClick={() => setReportMode('full')}
-              className={`flex items-center gap-1.5 pb-1 transition-all cursor-pointer border-b-2 -mb-px ${
+              className={`inline-flex items-center gap-1.5 pb-2 -mb-[13px] transition-colors cursor-pointer border-b-2 ${
                 reportMode === 'full'
-                  ? 'border-zinc-100 text-zinc-100 font-semibold'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                  ? 'border-text-primary text-text-primary font-medium'
+                  : 'border-transparent text-text-muted hover:text-text-secondary'
               }`}
             >
               <span>All Branches</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                reportMode === 'full' ? 'bg-zinc-800 text-zinc-200' : 'bg-zinc-900 text-zinc-500'
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono leading-none ${
+                reportMode === 'full' ? 'bg-surface-muted text-text-primary' : 'bg-surface text-text-muted border border-border-subtle'
               }`}>
                 {allRepoScans.length}
               </span>
             </button>
           </div>
 
-          {/* Action Tools & View Mode Toggle */}
-          <div className="flex items-center gap-4 shrink-0">
-            {/* View Mode Toggle: HTML Report vs Raw Markdown */}
-            <div className="flex items-center gap-4 text-xs font-mono">
-              <button
-                type="button"
-                onClick={() => setViewMode('rendered')}
-                className={`flex items-center gap-1.5 pb-1 transition-all cursor-pointer border-b-2 -mb-px ${
-                  viewMode === 'rendered'
-                    ? 'border-zinc-100 text-zinc-100 font-medium'
-                    : 'border-transparent text-zinc-500 hover:text-zinc-300'
-                }`}
-                title="View formatted HTML report"
-              >
-                <RiFileTextLine className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Report</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('raw')}
-                className={`flex items-center gap-1.5 pb-1 transition-all cursor-pointer border-b-2 -mb-px ${
-                  viewMode === 'raw'
-                    ? 'border-zinc-100 text-zinc-100 font-medium'
-                    : 'border-transparent text-zinc-500 hover:text-zinc-300'
-                }`}
-                title="View raw Markdown source"
-              >
-                <RiCodeLine className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Raw .md</span>
-              </button>
-            </div>
+          {/* Action Tools */}
+          <div className="flex items-center gap-3 text-xs font-mono shrink-0">
+            <button
+              type="button"
+              onClick={handleRevalidate}
+              disabled={isRevalidating}
+              className="inline-flex items-center gap-1.5 py-1 px-2 rounded text-text-muted hover:text-text-primary hover:bg-surface transition-colors cursor-pointer disabled:opacity-50"
+              title="Re-run taint flow analysis and verification"
+            >
+              <RiSparklingLine className={`w-3.5 h-3.5 shrink-0 ${isRevalidating ? 'animate-spin' : ''}`} />
+              <span>Re-verify</span>
+            </button>
 
-            {totalCount > 0 && (
-              <button
-                type="button"
-                onClick={handleRevalidate}
-                disabled={isRevalidating}
-                className="hidden md:inline-flex items-center gap-1.5 text-xs font-mono text-zinc-400 hover:text-zinc-100 px-2 py-1 rounded transition-colors cursor-pointer disabled:opacity-50"
-                title="Re-run taint flow analysis and verification"
-              >
-                <RiSparklingLine className={`w-3.5 h-3.5 text-zinc-400 ${isRevalidating ? 'animate-spin' : ''}`} />
-                <span>{isRevalidating ? 'Analyzing...' : 'Re-verify'}</span>
-              </button>
-            )}
-
+            {/* Export Dropdown */}
             <div className="relative">
               <button
                 type="button"
                 onClick={() => setExportMenuOpen(!exportMenuOpen)}
-                className="text-xs font-mono text-zinc-400 hover:text-zinc-100 px-2 py-1 rounded transition-colors flex items-center gap-1.5 cursor-pointer"
+                className="inline-flex items-center gap-1.5 py-1 px-2 rounded text-text-muted hover:text-text-primary hover:bg-surface transition-colors cursor-pointer"
                 title="Export report in various formats"
               >
-                <RiDownloadLine className="w-3.5 h-3.5 text-zinc-400" />
-                <span className="hidden lg:inline">Export</span>
+                <RiDownloadLine className="w-3.5 h-3.5 shrink-0" />
+                <span>Export</span>
               </button>
 
               {exportMenuOpen && (
@@ -1015,136 +967,125 @@ export function ReportPage({ scanId, onBack }: ReportPageProps) {
               )}
             </div>
 
+            {/* Delete Button */}
             <button
               type="button"
               onClick={handleDeleteScan}
               title="Delete scan record"
-              className="p-1 rounded text-zinc-500 hover:text-danger transition-colors cursor-pointer"
+              className="inline-flex items-center justify-center p-1.5 rounded text-text-muted hover:text-danger hover:bg-danger/10 transition-colors cursor-pointer"
             >
-              <RiDeleteBinLine className="w-4 h-4" />
+              <RiDeleteBinLine className="w-3.5 h-3.5 shrink-0" />
             </button>
           </div>
         </div>
-      </header>
 
-      {/* Main Full-Width Document Body */}
-      <main className="flex-1 max-w-5xl w-full mx-auto px-6 sm:px-12 py-8 space-y-8">
-        {/* Document Top Action & Filter Ribbon */}
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-0 border-b border-zinc-800">
-          {/* Underline Filter Control */}
-          <div className="flex flex-wrap items-center gap-6 text-xs font-mono">
-            <button
-              type="button"
-              onClick={() => setSeverityFilter('ALL')}
-              className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
-                severityFilter === 'ALL'
-                  ? 'border-zinc-100 text-zinc-100 font-semibold'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              All ({displayedFindings.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setSeverityFilter('HIGH_CRITICAL')}
-              className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
-                severityFilter === 'HIGH_CRITICAL'
-                  ? 'border-rose-400 text-rose-300 font-semibold'
-                  : 'border-transparent text-zinc-400 hover:text-rose-400'
-              }`}
-            >
-              High/Crit ({highCriticalCount})
-            </button>
-            <button
-              type="button"
-              onClick={() => setSeverityFilter('MEDIUM')}
-              className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
-                severityFilter === 'MEDIUM'
-                  ? 'border-amber-400 text-amber-300 font-semibold'
-                  : 'border-transparent text-zinc-400 hover:text-amber-400'
-              }`}
-            >
-              Medium ({mediumCount})
-            </button>
-
-            <span className="text-zinc-700 select-none pb-3">|</span>
-
-            <button
-              type="button"
-              onClick={() => setStatusFilter(statusFilter === 'CONFIRMED' ? 'ALL' : 'CONFIRMED')}
-              className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
-                statusFilter === 'CONFIRMED'
-                  ? 'border-emerald-400 text-emerald-300 font-semibold'
-                  : 'border-transparent text-zinc-400 hover:text-emerald-400'
-              }`}
-            >
-              Confirmed ({verifiedCount})
-            </button>
-            <button
-              type="button"
-              onClick={() => setStatusFilter(statusFilter === 'FALSE_POSITIVES' ? 'ALL' : 'FALSE_POSITIVES')}
-              className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
-                statusFilter === 'FALSE_POSITIVES'
-                  ? 'border-zinc-400 text-zinc-300 font-semibold'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              False Positives ({falsePositiveCount})
-            </button>
-          </div>
-
-          {/* Prominent Fix & PR Button */}
-          {totalCount > 0 && (
-            <div className="flex items-center gap-2 pb-2.5">
-              <button
-                type="button"
-                onClick={handleOpenFixModal}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-semibold shadow-md hover:shadow-emerald-500/10 transition-all cursor-pointer"
-                title="Generate AI security fix and open Pull Request on GitHub"
-              >
-                <RiGitPullRequestLine className="w-4 h-4" />
-                <span>Fix & PR</span>
-              </button>
+        {totalCount === 0 ? (
+          /* Simple, human, un-boxed zero-vulnerability message */
+          <div className="py-24 flex flex-col items-center justify-center text-center space-y-4">
+            <RiShieldCheckLine className="w-10 h-10 text-emerald-500 shrink-0" />
+            <div className="space-y-1 max-w-sm">
+              <h2 className="text-base font-medium text-text-primary">
+                No vulnerabilities detected
+              </h2>
+              <p className="text-xs text-text-muted">
+                Scan completed on <span className="font-mono text-text-secondary">{scan.branch}</span> with 0 security findings.
+              </p>
             </div>
-          )}
-        </div>
-
-        {/* Document Content View */}
-        {viewMode === 'rendered' ? (
-          /* Publication-Grade Compiled HTML Report */
-          <article className="prose prose-invert max-w-none">
-            <CompiledMarkdownReport markdown={reportMarkdown} />
-          </article>
+            <div className="pt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onBack}
+                icon={<RiArrowLeftLine className="w-3.5 h-3.5" />}
+              >
+                Back to Dashboard
+              </Button>
+            </div>
+          </div>
         ) : (
-          /* Raw Markdown Source View with Copy Action */
-          <div className="space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
-              <div className="text-xs font-mono text-zinc-400 flex items-center gap-2">
-                <RiCodeLine className="w-4 h-4 text-zinc-500" />
-                <span>Raw Markdown Source ({reportMarkdown.length} characters)</span>
+          <div className="space-y-8">
+            {/* Findings Filter Ribbon */}
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-0 border-b border-border-subtle">
+              {/* Underline Filter Control */}
+              <div className="flex flex-wrap items-center gap-6 text-xs font-mono">
+                <button
+                  type="button"
+                  onClick={() => setSeverityFilter('ALL')}
+                  className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
+                    severityFilter === 'ALL'
+                      ? 'border-text-primary text-text-primary font-semibold'
+                      : 'border-transparent text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  All ({displayedFindings.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSeverityFilter('HIGH_CRITICAL')}
+                  className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
+                    severityFilter === 'HIGH_CRITICAL'
+                      ? 'border-rose-400 text-rose-300 font-semibold'
+                      : 'border-transparent text-text-secondary hover:text-rose-400'
+                  }`}
+                >
+                  High/Crit ({highCriticalCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSeverityFilter('MEDIUM')}
+                  className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
+                    severityFilter === 'MEDIUM'
+                      ? 'border-amber-400 text-amber-300 font-semibold'
+                      : 'border-transparent text-text-secondary hover:text-amber-400'
+                  }`}
+                >
+                  Medium ({mediumCount})
+                </button>
+
+                <span className="text-border-subtle select-none pb-3">|</span>
+
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter(statusFilter === 'CONFIRMED' ? 'ALL' : 'CONFIRMED')}
+                  className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
+                    statusFilter === 'CONFIRMED'
+                      ? 'border-emerald-400 text-emerald-300 font-semibold'
+                      : 'border-transparent text-text-secondary hover:text-emerald-400'
+                  }`}
+                >
+                  Confirmed ({verifiedCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter(statusFilter === 'FALSE_POSITIVES' ? 'ALL' : 'FALSE_POSITIVES')}
+                  className={`pb-3 transition-all cursor-pointer border-b-2 -mb-px ${
+                    statusFilter === 'FALSE_POSITIVES'
+                      ? 'border-text-secondary text-text-primary font-semibold'
+                      : 'border-transparent text-text-muted hover:text-text-secondary'
+                  }`}
+                >
+                  False Positives ({falsePositiveCount})
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={handleCopyMarkdown}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-mono transition-colors cursor-pointer"
-              >
-                {copiedMd ? (
-                  <>
-                    <RiCheckLine className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="text-emerald-400">Copied</span>
-                  </>
-                ) : (
-                  <>
-                    <RiFileCopyLine className="w-3.5 h-3.5" />
-                    <span>Copy Raw Markdown</span>
-                  </>
-                )}
-              </button>
+
+              {/* Fix & PR Button */}
+              <div className="flex items-center gap-2 pb-2.5">
+                <button
+                  type="button"
+                  onClick={handleOpenFixModal}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-semibold shadow-sm transition-all cursor-pointer"
+                  title="Generate AI security fix and open Pull Request on GitHub"
+                >
+                  <RiGitPullRequestLine className="w-3.5 h-3.5 text-white" />
+                  <span>Fix & PR</span>
+                </button>
+              </div>
             </div>
 
-            <pre className="p-5 rounded-xl bg-[#121215] border border-zinc-800 text-zinc-300 font-mono text-xs whitespace-pre-wrap leading-relaxed overflow-x-auto selection:bg-rose-500/20">
-              {reportMarkdown}
-            </pre>
+            {/* Publication-Grade Compiled HTML Report */}
+            <article className="prose prose-invert max-w-none">
+              <CompiledMarkdownReport markdown={reportMarkdown} />
+            </article>
           </div>
         )}
       </main>

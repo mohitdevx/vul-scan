@@ -67,9 +67,10 @@ describe('Report Renderers (JSON, Markdown, HTML)', () => {
     assert.ok(md.includes('# VulScan Security Assessment Report: vulnsites'))
     assert.ok(md.includes('`https://github.com/mohitdevx/vulnsites`'))
 
-    // Posture caution block
-    assert.ok(md.includes('> [!CAUTION]'))
-    assert.ok(md.includes('1 HIGH-SEVERITY VULNERABILITY DETECTED'))
+    // Posture Section
+    assert.ok(md.includes('## 1. Security Posture'))
+    assert.ok(md.includes('**Overall Verdict:**'))
+    assert.ok(md.includes('1 high-severity finding identified.'))
 
     // Tables
     assert.ok(md.includes('| Severity | Findings Count | Priority |'))

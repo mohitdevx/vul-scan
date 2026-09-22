@@ -62,6 +62,12 @@ export interface FindingItem {
   message: string
   remediation: string
   aiAnalysis?: AiTriageResult
+  pr?: {
+    prNumber: number
+    prUrl: string
+    branch: string
+    state?: string
+  }
 }
 
 export interface ScanItem {

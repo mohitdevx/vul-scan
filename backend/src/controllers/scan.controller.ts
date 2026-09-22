@@ -559,6 +559,32 @@ export async function createFindingPr(req: Request, res: Response, next: NextFun
       githubToken,
     })
 
+    if (scan.findingsJson) {
+      try {
+        const parsedFindings = JSON.parse(scan.findingsJson)
+        const updated = parsedFindings.map((f: any) => {
+          if (f.id === findingId) {
+            return {
+              ...f,
+              pr: {
+                prNumber: result.prNumber,
+                prUrl: result.prUrl,
+                branch: result.branch,
+                state: 'open',
+              },
+            }
+          }
+          return f
+        })
+        await prisma.scan.update({
+          where: { id: scan.id },
+          data: { findingsJson: JSON.stringify(updated) },
+        })
+      } catch (e: any) {
+        logger.warn(`Failed to update findingsJson with PR details: ${e.message}`)
+      }
+    }
+
     res.json({
       message: result.message,
       result,

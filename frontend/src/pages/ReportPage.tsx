@@ -5,6 +5,7 @@ import {
   RiShieldCheckLine,
   RiGitBranchLine,
   RiGitPullRequestLine,
+  RiCheckLine,
   RiSparklingLine,
   RiAlertLine,
   RiInformationLine,
@@ -596,6 +597,16 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
   const [selectedFindingForFix, setSelectedFindingForFix] = useState<FindingWithBranch | null>(null)
   const [isFixModalOpen, setIsFixModalOpen] = useState(false)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  
+  // Persistent tracking of created PRs across browser reloads
+  const [sentPrs, setSentPrs] = useState<Record<string, { prNumber: number; prUrl: string }>>(() => {
+    try {
+      const saved = localStorage.getItem(`vulscan_sent_prs_${scanId}`)
+      return saved ? JSON.parse(saved) : {}
+    } catch {
+      return {}
+    }
+  })
 
   // Fetch scan details and sibling repository scans
   const loadReportData = useCallback(async () => {
@@ -604,6 +615,25 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
     try {
       const { scan: fetchedScan } = await scanApi.getById(scanId)
       setScan(fetchedScan)
+
+      // Merge any PRs recorded in database findings with local state
+      if (fetchedScan.findings) {
+        const fromDb: Record<string, { prNumber: number; prUrl: string }> = {}
+        fetchedScan.findings.forEach(f => {
+          if (f.pr) {
+            fromDb[f.id] = { prNumber: f.pr.prNumber, prUrl: f.pr.prUrl }
+          }
+        })
+        if (Object.keys(fromDb).length > 0) {
+          setSentPrs(prev => {
+            const merged = { ...prev, ...fromDb }
+            try {
+              localStorage.setItem(`vulscan_sent_prs_${scanId}`, JSON.stringify(merged))
+            } catch {}
+            return merged
+          })
+        }
+      }
 
       if (fetchedScan.repoUrl) {
         try {
@@ -1073,11 +1103,24 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
                 <button
                   type="button"
                   onClick={handleOpenFixModal}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-semibold shadow-sm transition-all cursor-pointer"
-                  title="Generate AI security fix and open Pull Request on GitHub"
+                  className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg font-mono text-xs font-semibold shadow-sm transition-all cursor-pointer ${
+                    Object.keys(sentPrs).length > 0
+                      ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25'
+                      : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                  }`}
+                  title={Object.keys(sentPrs).length > 0 ? 'Pull Request already sent to GitHub' : 'Generate security fix and open Pull Request on GitHub'}
                 >
-                  <RiGitPullRequestLine className="w-3.5 h-3.5 text-white" />
-                  <span>Fix & PR</span>
+                  {Object.keys(sentPrs).length > 0 ? (
+                    <>
+                      <RiCheckLine className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>PR Sent</span>
+                    </>
+                  ) : (
+                    <>
+                      <RiGitPullRequestLine className="w-3.5 h-3.5 text-white" />
+                      <span>Fix & PR</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -1098,6 +1141,15 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
         }}
         scanId={selectedFindingForFix?.sourceScanId || scan?.id || ''}
         finding={selectedFindingForFix}
+        onPrCreated={(findingId, prNumber, prUrl) => {
+          setSentPrs(prev => {
+            const next = { ...prev, [findingId]: { prNumber, prUrl } }
+            try {
+              localStorage.setItem(`vulscan_sent_prs_${scanId}`, JSON.stringify(next))
+            } catch {}
+            return next
+          })
+        }}
       />
     </div>
   )

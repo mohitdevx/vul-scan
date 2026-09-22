@@ -7,22 +7,25 @@ import {
   RiFileCopyLine,
   RiExternalLinkLine,
   RiLoader4Line,
-  RiShieldCheckLine,
   RiEyeLine,
   RiEyeOffLine,
   RiCodeBoxLine,
   RiAlertLine,
   RiGithubFill,
   RiGitMergeLine,
+  RiEditLine,
 } from '@remixicon/react'
 import { scanApi, githubApi, type SecurityFixProposal, type FindingItem } from '../../services/api'
 import { useToast } from '../../context/ToastContext'
+import { CodeBlock } from '../atoms/CodeBlock'
+import { Button } from '../atoms/Button'
 
 interface FixPrModalProps {
   isOpen: boolean
   onClose: () => void
   scanId: string
   finding: FindingItem | null
+  onPrCreated?: (findingId: string, prNumber: number, prUrl: string) => void
 }
 
 export const FixPrModal: React.FC<FixPrModalProps> = ({
@@ -30,13 +33,17 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
   onClose,
   scanId,
   finding,
+  onPrCreated,
 }) => {
   const { success, error, info } = useToast()
 
   const [isLoading, setIsLoading] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [proposal, setProposal] = useState<SecurityFixProposal | null>(null)
-  const [activeTab, setActiveTab] = useState<'diff' | 'preview'>('diff')
+  const [activeTab, setActiveTab] = useState<'diff' | 'edit' | 'context'>('diff')
+
+  // Editable replacement snippet state
+  const [replacementSnippet, setReplacementSnippet] = useState('')
 
   // GitHub Authorization state
   const [ghStatus, setGhStatus] = useState<{
@@ -72,7 +79,6 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
     if (!isOpen) return
     setIsCheckingAuth(true)
 
-    // Check current connection status
     githubApi
       .getStatus()
       .then(res => {
@@ -89,7 +95,6 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
         setIsCheckingAuth(false)
       })
 
-    // Check if OAuth URL is configured
     githubApi
       .getOAuthUrl()
       .then(res => {
@@ -109,7 +114,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
           username: event.data.username,
           avatarUrl: event.data.avatarUrl,
         })
-        success(`GitHub authorized as @${event.data.username}! You can now open PRs with 1-click.`, 'Connected')
+        success(`GitHub connected as @${event.data.username}`, 'Connected')
       }
     }
     window.addEventListener('message', handleMessage)
@@ -125,7 +130,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
     window.open(oauthConfig.url, 'github-oauth', `width=${width},height=${height},left=${left},top=${top}`)
   }
 
-  // Fetch AI-generated fix when modal opens
+  // Fetch fix proposal when modal opens
   useEffect(() => {
     if (!isOpen || !finding || !scanId) {
       setProposal(null)
@@ -142,14 +147,15 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
       .then(res => {
         if (!isMounted) return
         setProposal(res.proposal)
+        setReplacementSnippet(res.proposal.replacementSnippet)
         setBranchName(res.proposal.suggestedBranch)
         setPrTitle(res.proposal.prTitle)
         setPrDescription(res.proposal.prDescription)
       })
       .catch(err => {
         if (!isMounted) return
-        const msg = err instanceof Error ? err.message : 'Failed to generate AI fix'
-        error(msg, 'Fix Generation Error')
+        const msg = err instanceof Error ? err.message : 'Failed to generate remediation proposal'
+        error(msg, 'Error')
       })
       .finally(() => {
         if (isMounted) setIsLoading(false)
@@ -166,10 +172,9 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
     navigator.clipboard.writeText(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
-    success('Copied to clipboard', 'Success')
+    success('Copied code to clipboard', 'Copied')
   }
 
-  // Authorize GitHub account once
   const handleAuthorizeGitHub = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!inputToken.trim()) return
@@ -183,7 +188,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
         avatarUrl: res.avatarUrl,
       })
       setInputToken('')
-      success(`GitHub authorized as @${res.username}! You can now open PRs with 1-click.`, 'Connected')
+      success(`GitHub authorized as @${res.username}`, 'Connected')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to authorize GitHub account'
       error(msg, 'Authorization Failed')
@@ -196,7 +201,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
     try {
       await githubApi.disconnect()
       setGhStatus({ connected: false, username: null, avatarUrl: null })
-      info('GitHub authorization disconnected', 'Disconnected')
+      info('GitHub disconnected', 'Disconnected')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to disconnect GitHub'
       error(msg, 'Error')
@@ -221,17 +226,18 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
         branchName: branchName.trim(),
         filePath: proposal.filePath,
         searchSnippet: proposal.searchSnippet,
-        replacementSnippet: proposal.replacementSnippet,
+        replacementSnippet: replacementSnippet.trim() || proposal.replacementSnippet,
         commitMessage: proposal.commitMessage,
         prTitle: prTitle.trim(),
         prDescription: prDescription.trim(),
       })
 
       setCreatedPr(res.result)
-      success(`Pull Request #${res.result.prNumber} created on GitHub!`, 'PR Opened')
+      onPrCreated?.(finding.id, res.result.prNumber, res.result.prUrl)
+      success(`Pull Request #${res.result.prNumber} opened on GitHub`, 'PR Opened')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to create Pull Request'
-      error(msg, 'PR Creation Error')
+      error(msg, 'PR Error')
     } finally {
       setIsSubmitting(false)
     }
@@ -243,7 +249,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
     try {
       await scanApi.mergePr(scanId, createdPr.prNumber)
       setIsMerged(true)
-      success(`Pull Request #${createdPr.prNumber} merged successfully into target branch!`, 'Merged')
+      success(`Pull Request #${createdPr.prNumber} merged successfully`, 'Merged')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to merge Pull Request'
       error(msg, 'Merge Error')
@@ -253,22 +259,19 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="relative w-full max-w-4xl bg-[#09090b] border border-[#27272a] rounded-2xl shadow-2xl overflow-hidden my-8 flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs overflow-y-auto font-sans">
+      <div className="relative w-full max-w-3xl bg-surface border border-border rounded-xl shadow-2xl overflow-hidden my-8 flex flex-col max-h-[90vh] text-text-primary">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#27272a] bg-[#121215]/80">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-              <RiGitPullRequestLine className="w-5 h-5" />
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-surface-muted/30">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-2 rounded-lg bg-surface border border-border-subtle text-text-primary shrink-0">
+              <RiGitPullRequestLine className="w-4 h-4" />
             </div>
-            <div>
-              <h3 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                <span>AI Automated Remediation & GitHub Pull Request</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
-                  qwen2.5-coder:3b
-                </span>
+            <div className="min-w-0">
+              <h3 className="text-sm font-medium text-text-primary truncate">
+                Remediate Finding
               </h3>
-              <p className="text-xs text-zinc-400 font-mono mt-0.5 truncate max-w-xl">
+              <p className="text-xs text-text-muted font-mono mt-0.5 truncate">
                 {finding.filePath}:{finding.line} &bull; {finding.ruleName}
               </p>
             </div>
@@ -277,7 +280,8 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors cursor-pointer"
+            className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface transition-colors cursor-pointer"
+            title="Close"
           >
             <RiCloseLine className="w-5 h-5" />
           </button>
@@ -286,211 +290,168 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
           {isLoading ? (
-            <div className="py-20 flex flex-col items-center justify-center space-y-4">
-              <RiLoader4Line className="w-8 h-8 text-zinc-400 animate-spin" />
-              <div className="text-center">
-                <p className="text-sm text-zinc-200 font-medium">Synthesizing Security Remediation</p>
-                <p className="text-xs text-zinc-500 mt-1">
-                  Local AI engine is analyzing taint flow and generating a hardened patch...
-                </p>
-              </div>
+            <div className="py-20 flex flex-col items-center justify-center space-y-3">
+              <div className="w-5 h-5 border-2 border-border border-t-text-primary rounded-full animate-spin" />
+              <p className="text-xs font-mono text-text-muted">
+                Generating remediation patch...
+              </p>
             </div>
           ) : !proposal ? (
             <div className="py-16 text-center space-y-3">
-              <RiAlertLine className="w-8 h-8 text-rose-400 mx-auto" />
-              <p className="text-sm text-zinc-300">Unable to generate fix proposal for this finding.</p>
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg font-mono text-xs cursor-pointer"
-              >
+              <RiAlertLine className="w-6 h-6 text-danger mx-auto" />
+              <p className="text-xs text-text-secondary font-mono">Unable to generate fix proposal for this finding.</p>
+              <Button variant="secondary" size="sm" onClick={onClose}>
                 Close
-              </button>
+              </Button>
             </div>
           ) : createdPr ? (
-            /* Success State */
-            <div className="py-10 px-6 text-center space-y-5 bg-emerald-950/10 border border-emerald-500/20 rounded-xl">
-              <div className="w-12 h-12 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mx-auto">
-                <RiCheckLine className="w-6 h-6" />
-              </div>
-              <div>
-                <h4 className="text-base font-semibold text-zinc-100">Pull Request Opened Successfully!</h4>
-                <p className="text-xs text-zinc-400 mt-1 max-w-md mx-auto">
-                  A new branch was pushed and a Pull Request with the AI security fix was created on GitHub.
+            /* Success State - Clean & Unboxed */
+            <div className="py-14 flex flex-col items-center justify-center text-center space-y-4">
+              <RiCheckLine className="w-8 h-8 text-emerald-500 shrink-0" />
+              <div className="space-y-1 max-w-sm">
+                <h4 className="text-sm font-medium text-text-primary">
+                  Pull request #{createdPr.prNumber} opened
+                </h4>
+                <p className="text-xs text-text-muted">
+                  Branch <span className="font-mono text-text-secondary">{createdPr.branch}</span> has been pushed to GitHub.
                 </p>
               </div>
 
-              <div className="inline-flex items-center gap-2 p-3 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 font-mono text-xs">
-                <RiGitBranchLine className="w-4 h-4 text-zinc-500" />
-                <span>Branch: {createdPr.branch}</span>
-                <span className="text-zinc-600">&bull;</span>
-                <span className="text-emerald-400 font-semibold">PR #{createdPr.prNumber}</span>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-3">
                 <a
                   href={createdPr.prUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium text-xs transition-colors cursor-pointer border border-zinc-700"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-surface hover:bg-surface-hover text-text-primary font-mono text-xs border border-border transition-colors cursor-pointer"
                 >
                   <span>View on GitHub</span>
-                  <RiExternalLinkLine className="w-4 h-4" />
+                  <RiExternalLinkLine className="w-3.5 h-3.5" />
                 </a>
 
                 {isMerged ? (
-                  <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-500/20 text-emerald-300 font-medium text-xs border border-emerald-500/30">
-                    <RiCheckLine className="w-4 h-4" />
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-emerald-400 font-mono text-xs">
+                    <RiCheckLine className="w-3.5 h-3.5" />
                     <span>Merged into {proposal.targetBranch}</span>
-                  </div>
+                  </span>
                 ) : (
                   <button
                     type="button"
                     onClick={handleMergePr}
                     disabled={isMerging}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs transition-colors cursor-pointer disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
                   >
                     {isMerging ? (
                       <>
-                        <RiLoader4Line className="w-4 h-4 animate-spin" />
-                        <span>Merging PR...</span>
+                        <RiLoader4Line className="w-3.5 h-3.5 animate-spin" />
+                        <span>Merging...</span>
                       </>
                     ) : (
                       <>
-                        <RiGitMergeLine className="w-4 h-4" />
-                        <span>Merge Pull Request</span>
+                        <RiGitMergeLine className="w-3.5 h-3.5" />
+                        <span>Merge PR</span>
                       </>
                     )}
                   </button>
                 )}
 
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-4 py-2.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 text-xs transition-colors cursor-pointer border border-zinc-800"
-                >
+                <Button variant="outline" size="sm" onClick={onClose}>
                   Done
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
             <>
-              {/* GitHub Authorization Banner - The "Butter Experience" */}
+              {/* GitHub Authorization Bar */}
               {isCheckingAuth ? (
-                <div className="p-3.5 rounded-xl bg-[#121215] border border-[#27272a] flex items-center gap-2 text-zinc-400">
-                  <RiLoader4Line className="w-4 h-4 animate-spin text-zinc-500" />
+                <div className="p-3 rounded-lg bg-surface-muted/30 border border-border-subtle flex items-center gap-2 text-text-muted text-xs font-mono">
+                  <div className="w-3.5 h-3.5 border-2 border-border border-t-text-primary rounded-full animate-spin" />
                   <span>Checking GitHub authorization...</span>
                 </div>
               ) : ghStatus.connected ? (
-                <div className="flex items-center justify-between p-3.5 rounded-xl bg-[#121215] border border-emerald-500/20">
-                  <div className="flex items-center gap-3">
+                <div className="flex items-center justify-between p-3 rounded-lg bg-surface-muted/30 border border-border">
+                  <div className="flex items-center gap-2.5">
                     {ghStatus.avatarUrl ? (
                       <img
                         src={ghStatus.avatarUrl}
                         alt={ghStatus.username || 'GitHub User'}
-                        className="w-7 h-7 rounded-full border border-zinc-700"
+                        className="w-6 h-6 rounded-full border border-border"
                       />
                     ) : (
-                      <div className="w-7 h-7 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-300">
-                        <RiGithubFill className="w-4 h-4" />
+                      <div className="w-6 h-6 rounded-full bg-surface border border-border flex items-center justify-center text-text-secondary">
+                        <RiGithubFill className="w-3.5 h-3.5" />
                       </div>
                     )}
                     <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold text-zinc-200">
-                          Authorized as @{ghStatus.username}
-                        </span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          Active &bull; 1-Click PR Enabled
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-zinc-500 mt-0.5">
-                        Pull requests will be automatically branched, pushed, and opened via this account without asking for tokens.
-                      </p>
+                      <span className="text-xs font-medium text-text-primary">
+                        Connected as @{ghStatus.username}
+                      </span>
                     </div>
                   </div>
 
                   <button
                     type="button"
                     onClick={handleDisconnectGitHub}
-                    className="text-[11px] font-mono text-zinc-500 hover:text-rose-400 underline transition-colors cursor-pointer"
+                    className="text-[11px] font-mono text-text-muted hover:text-danger underline transition-colors cursor-pointer"
                   >
                     Disconnect
                   </button>
                 </div>
               ) : (
-                /* One-time GitHub Authorization setup */
-                <div className="p-5 rounded-xl bg-[#121215] border border-[#27272a] space-y-4">
+                <div className="p-4 rounded-lg bg-surface-muted/30 border border-border space-y-3">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-zinc-200 font-medium">
-                      <RiGithubFill className="w-4 h-4 text-zinc-300" />
-                      <span>One-Time GitHub Authorization</span>
+                    <div className="flex items-center gap-2 text-text-primary font-medium">
+                      <RiGithubFill className="w-4 h-4 text-text-secondary" />
+                      <span>GitHub Authorization</span>
                     </div>
-                    <span className="text-[10px] font-mono text-zinc-500">Authorize once &bull; Works seamlessly forever</span>
+                    <span className="text-[10px] font-mono text-text-muted">Required to open PR</span>
                   </div>
 
-                  <p className="text-zinc-400 text-xs leading-relaxed">
-                    Authorize your GitHub account once to enable instant, zero-prompt Pull Request creation directly to your repositories.
-                  </p>
-
-                  {/* Primary OAuth Button */}
                   {oauthConfig.configured ? (
-                    <div className="pt-1">
-                      <button
-                        type="button"
-                        onClick={handleOpenOAuthPopup}
-                        className="w-full flex items-center justify-center gap-2.5 px-5 py-3 rounded-xl bg-zinc-100 hover:bg-white text-zinc-900 font-semibold text-xs transition-colors shadow-md cursor-pointer"
-                      >
-                        <RiGithubFill className="w-4 h-4" />
-                        <span>Authorize on GitHub &rarr;</span>
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={handleOpenOAuthPopup}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-primary-text font-medium text-xs transition-colors cursor-pointer"
+                    >
+                      <RiGithubFill className="w-4 h-4" />
+                      <span>Authorize with GitHub</span>
+                    </button>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       <div className="flex items-center gap-2">
                         <div className="relative flex-1">
                           <input
                             type={showToken ? 'text' : 'password'}
                             value={inputToken}
                             onChange={e => setInputToken(e.target.value)}
-                            placeholder="Paste your GitHub Personal Access Token (with repo scope)..."
-                            className="w-full pl-3 pr-9 py-2 bg-[#09090b] border border-[#27272a] rounded-lg text-zinc-200 font-mono text-xs focus:outline-none focus:border-zinc-500"
+                            placeholder="GitHub Personal Access Token (repo scope)..."
+                            className="w-full pl-3 pr-8 py-1.5 bg-surface border border-border rounded-lg text-text-primary font-mono text-xs focus:outline-none focus:border-border"
                           />
                           <button
                             type="button"
                             onClick={() => setShowToken(!showToken)}
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary cursor-pointer"
                           >
                             {showToken ? <RiEyeOffLine className="w-3.5 h-3.5" /> : <RiEyeLine className="w-3.5 h-3.5" />}
                           </button>
                         </div>
 
-                        <button
-                          type="button"
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           onClick={handleAuthorizeGitHub}
                           disabled={isConnectingGh || !inputToken.trim()}
-                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-medium text-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {isConnectingGh ? (
-                            <>
-                              <RiLoader4Line className="w-3.5 h-3.5 animate-spin" />
-                              <span>Linking...</span>
-                            </>
-                          ) : (
-                            <span>Authorize Account</span>
-                          )}
-                        </button>
+                          {isConnectingGh ? 'Connecting...' : 'Authorize'}
+                        </Button>
                       </div>
 
-                      <div className="flex items-center justify-between text-[11px] text-zinc-500">
-                        <span className="text-zinc-500">
-                          To enable the native OAuth button, set <code className="text-zinc-400">GITHUB_CLIENT_ID</code> in backend/.env
-                        </span>
+                      <div className="flex items-center justify-between text-[11px] font-mono text-text-muted">
+                        <span>Token is securely stored locally in your session.</span>
                         <a
-                          href="https://github.com/settings/tokens/new?scopes=repo&description=VulnScan%20AI%20PR%20Bot"
+                          href="https://github.com/settings/tokens/new?scopes=repo&description=VulScan%20PR%20Bot"
                           target="_blank"
                           rel="noreferrer"
-                          className="text-zinc-400 hover:text-zinc-200 underline decoration-zinc-700"
+                          className="text-text-secondary hover:text-text-primary underline"
                         >
                           Generate token &rarr;
                         </a>
@@ -500,47 +461,59 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                 </div>
               )}
 
-              {/* Security Advisory Rationale */}
-              <div className="bg-[#121215] border border-[#27272a] rounded-xl p-4 space-y-2">
-                <div className="flex items-center gap-2 text-zinc-300 font-medium">
-                  <RiShieldCheckLine className="w-4 h-4 text-emerald-400" />
-                  <span className="tracking-wide">AI Remediation Rationale</span>
+              {/* Remediation Explanation */}
+              {proposal.explanation && (
+                <div className="bg-surface-muted/20 border border-border-subtle rounded-lg p-3.5 space-y-1">
+                  <span className="font-mono text-[11px] text-text-muted">Explanation</span>
+                  <p className="text-text-secondary leading-relaxed font-sans">{proposal.explanation}</p>
                 </div>
-                <p className="text-zinc-400 leading-relaxed font-sans">{proposal.explanation}</p>
-              </div>
+              )}
 
-              {/* Code Diff Section */}
+              {/* Code Diff & Editable Patch Section */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between border-b border-zinc-800 pb-0">
-                  <div className="flex items-center gap-6">
+                <div className="flex items-center justify-between border-b border-border-subtle pb-0">
+                  <div className="flex items-center gap-5 text-xs font-mono">
                     <button
                       type="button"
                       onClick={() => setActiveTab('diff')}
-                      className={`pb-2 text-xs font-mono transition-all cursor-pointer border-b-2 -mb-px ${
+                      className={`pb-2 transition-colors cursor-pointer border-b-2 -mb-px ${
                         activeTab === 'diff'
-                          ? 'border-zinc-100 text-zinc-100 font-semibold'
-                          : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                          ? 'border-text-primary text-text-primary font-medium'
+                          : 'border-transparent text-text-muted hover:text-text-secondary'
                       }`}
                     >
-                      Side-by-Side Diff
+                      Diff View
                     </button>
                     <button
                       type="button"
-                      onClick={() => setActiveTab('preview')}
-                      className={`pb-2 text-xs font-mono transition-all cursor-pointer border-b-2 -mb-px ${
-                        activeTab === 'preview'
-                          ? 'border-zinc-100 text-zinc-100 font-semibold'
-                          : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                      onClick={() => setActiveTab('edit')}
+                      className={`pb-2 transition-colors cursor-pointer border-b-2 -mb-px flex items-center gap-1.5 ${
+                        activeTab === 'edit'
+                          ? 'border-text-primary text-text-primary font-medium'
+                          : 'border-transparent text-text-muted hover:text-text-secondary'
                       }`}
                     >
-                      Context Preview
+                      <RiEditLine className="w-3.5 h-3.5" />
+                      <span>Edit Patch</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('context')}
+                      className={`pb-2 transition-colors cursor-pointer border-b-2 -mb-px flex items-center gap-1.5 ${
+                        activeTab === 'context'
+                          ? 'border-text-primary text-text-primary font-medium'
+                          : 'border-transparent text-text-muted hover:text-text-secondary'
+                      }`}
+                    >
+                      <RiCodeBoxLine className="w-3.5 h-3.5" />
+                      <span>Context Preview</span>
                     </button>
                   </div>
 
                   <button
                     type="button"
-                    onClick={() => handleCopyCode(proposal.replacementSnippet)}
-                    className="inline-flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200 font-mono text-[11px] cursor-pointer"
+                    onClick={() => handleCopyCode(replacementSnippet || proposal.replacementSnippet)}
+                    className="inline-flex items-center gap-1.5 text-text-muted hover:text-text-primary font-mono text-[11px] cursor-pointer pb-2"
                   >
                     {copied ? (
                       <>
@@ -550,45 +523,68 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                     ) : (
                       <>
                         <RiFileCopyLine className="w-3.5 h-3.5" />
-                        <span>Copy Replacement</span>
+                        <span>Copy Patch</span>
                       </>
                     )}
                   </button>
                 </div>
 
-                {activeTab === 'diff' ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {activeTab === 'diff' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
                     {/* Before / Vulnerable Code */}
-                    <div className="bg-[#121215] border border-rose-500/30 rounded-xl overflow-hidden">
-                      <div className="px-3.5 py-2 bg-rose-500/10 border-b border-rose-500/20 text-rose-400 font-mono text-[11px] font-medium flex items-center justify-between">
-                        <span>Original Vulnerable Code</span>
-                        <span className="text-[10px] uppercase tracking-wider">Before</span>
+                    <div className="bg-surface border border-rose-500/20 rounded-lg overflow-hidden flex flex-col">
+                      <div className="px-3 py-1.5 bg-rose-500/[0.06] border-b border-rose-500/20 text-rose-300 font-mono text-[11px] flex items-center justify-between">
+                        <span>Original Code</span>
+                        <span className="text-[10px] text-rose-400 font-semibold">Before</span>
                       </div>
-                      <pre className="p-4 text-rose-200/90 font-mono text-xs overflow-x-auto whitespace-pre leading-relaxed">
+                      <pre className="p-3 text-rose-200/90 font-mono text-xs overflow-x-auto whitespace-pre leading-relaxed flex-1">
                         {proposal.searchSnippet}
                       </pre>
                     </div>
 
                     {/* After / Fixed Code */}
-                    <div className="bg-[#121215] border border-emerald-500/30 rounded-xl overflow-hidden">
-                      <div className="px-3.5 py-2 bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-400 font-mono text-[11px] font-medium flex items-center justify-between">
-                        <span>Sanitized Secure Replacement</span>
-                        <span className="text-[10px] uppercase tracking-wider">After</span>
+                    <div className="bg-surface border border-emerald-500/20 rounded-lg overflow-hidden flex flex-col">
+                      <div className="px-3 py-1.5 bg-emerald-500/[0.06] border-b border-emerald-500/20 text-emerald-300 font-mono text-[11px] flex items-center justify-between">
+                        <span>Proposed Patch</span>
+                        <span className="text-[10px] text-emerald-400 font-semibold">After</span>
                       </div>
-                      <pre className="p-4 text-emerald-200/90 font-mono text-xs overflow-x-auto whitespace-pre leading-relaxed">
-                        {proposal.replacementSnippet}
+                      <pre className="p-3 text-emerald-200/90 font-mono text-xs overflow-x-auto whitespace-pre leading-relaxed flex-1">
+                        {replacementSnippet}
                       </pre>
                     </div>
                   </div>
-                ) : (
-                  <div className="bg-[#121215] border border-[#27272a] rounded-xl overflow-hidden">
-                    <div className="px-3.5 py-2 bg-[#151518] border-b border-[#27272a] text-zinc-400 font-mono text-[11px] flex items-center gap-2">
-                      <RiCodeBoxLine className="w-3.5 h-3.5 text-zinc-500" />
-                      <span>{proposal.filePath} (Full Function Preview)</span>
+                )}
+
+                {activeTab === 'edit' && (
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between text-[11px] font-mono text-text-muted">
+                      <span>Editable Patch Replacement:</span>
+                      <button
+                        type="button"
+                        onClick={() => setReplacementSnippet(proposal.replacementSnippet)}
+                        className="text-text-secondary hover:text-text-primary underline cursor-pointer"
+                      >
+                        Reset to default patch
+                      </button>
                     </div>
-                    <pre className="p-4 text-zinc-300 font-mono text-xs overflow-x-auto whitespace-pre leading-relaxed">
-                      {proposal.fixedContext}
-                    </pre>
+                    <textarea
+                      rows={6}
+                      value={replacementSnippet}
+                      onChange={e => setReplacementSnippet(e.target.value)}
+                      className="w-full p-3 bg-surface border border-border rounded-lg text-text-primary font-mono text-xs focus:outline-none focus:border-border leading-relaxed selection:bg-rose-500/20"
+                      placeholder="Write or customize replacement code snippet..."
+                    />
+                  </div>
+                )}
+
+                {activeTab === 'context' && (
+                  <div className="pt-1">
+                    <CodeBlock
+                      code={proposal.fixedContext}
+                      language="javascript"
+                      variant="bordered"
+                      filePath={proposal.filePath}
+                    />
                   </div>
                 )}
               </div>
@@ -597,11 +593,11 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
               <form onSubmit={handleCreatePr} className="space-y-4 pt-2">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-zinc-400 font-mono text-[11px] mb-1.5">
-                      Target Repository & Base Branch
+                    <label className="block text-text-muted font-mono text-[11px] mb-1.5">
+                      Target Repository & Branch
                     </label>
-                    <div className="flex items-center gap-2 px-3 py-2 bg-[#121215] border border-[#27272a] rounded-lg text-zinc-300 font-mono text-xs">
-                      <RiGitBranchLine className="w-4 h-4 text-zinc-500" />
+                    <div className="flex items-center gap-2 px-3 py-2 bg-surface border border-border rounded-lg text-text-secondary font-mono text-xs">
+                      <RiGitBranchLine className="w-3.5 h-3.5 text-text-muted shrink-0" />
                       <span className="truncate">
                         {proposal.repoOwner ? `${proposal.repoOwner}/${proposal.repoName}` : 'Repository'} :{' '}
                         {proposal.targetBranch}
@@ -610,67 +606,67 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-zinc-400 font-mono text-[11px] mb-1.5">
-                      New Fix Branch Name
+                    <label className="block text-text-muted font-mono text-[11px] mb-1.5">
+                      Fix Branch Name
                     </label>
                     <input
                       type="text"
                       value={branchName}
                       onChange={e => setBranchName(e.target.value)}
                       required
-                      className="w-full px-3 py-2 bg-[#121215] border border-[#27272a] rounded-lg text-zinc-200 font-mono text-xs focus:outline-none focus:border-zinc-500"
+                      className="w-full px-3 py-2 bg-surface border border-border rounded-lg text-text-primary font-mono text-xs focus:outline-none focus:border-border"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-zinc-400 font-mono text-[11px] mb-1.5">Pull Request Title</label>
+                  <label className="block text-text-muted font-mono text-[11px] mb-1.5">Pull Request Title</label>
                   <input
                     type="text"
                     value={prTitle}
                     onChange={e => setPrTitle(e.target.value)}
                     required
-                    className="w-full px-3 py-2 bg-[#121215] border border-[#27272a] rounded-lg text-zinc-200 font-sans text-xs focus:outline-none focus:border-zinc-500"
+                    className="w-full px-3 py-2 bg-surface border border-border rounded-lg text-text-primary font-sans text-xs focus:outline-none focus:border-border"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-zinc-400 font-mono text-[11px] mb-1.5">
-                    Pull Request Description (Markdown)
+                  <label className="block text-text-muted font-mono text-[11px] mb-1.5">
+                    Pull Request Description
                   </label>
                   <textarea
-                    rows={4}
+                    rows={3}
                     value={prDescription}
                     onChange={e => setPrDescription(e.target.value)}
-                    className="w-full px-3 py-2 bg-[#121215] border border-[#27272a] rounded-lg text-zinc-200 font-mono text-xs focus:outline-none focus:border-zinc-500 leading-relaxed"
+                    className="w-full px-3 py-2 bg-surface border border-border rounded-lg text-text-primary font-mono text-xs focus:outline-none focus:border-border leading-relaxed"
                   />
                 </div>
 
-                {/* Submit button footer */}
+                {/* Footer Buttons */}
                 <div className="flex items-center justify-end gap-3 pt-2">
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={onClose}
                     disabled={isSubmitting}
-                    className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg font-medium text-xs transition-colors cursor-pointer"
                   >
                     Cancel
-                  </button>
+                  </Button>
 
                   <button
                     type="submit"
                     disabled={isSubmitting || (!ghStatus.connected && !inputToken.trim()) || !proposal.canCreatePr}
-                    className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                   >
                     {isSubmitting ? (
                       <>
-                        <RiLoader4Line className="w-4 h-4 animate-spin" />
-                        <span>Pushing branch & opening PR...</span>
+                        <RiLoader4Line className="w-3.5 h-3.5 animate-spin" />
+                        <span>Opening PR...</span>
                       </>
                     ) : (
                       <>
-                        <RiGitPullRequestLine className="w-4 h-4" />
-                        <span>Send Pull Request</span>
+                        <RiGitPullRequestLine className="w-3.5 h-3.5" />
+                        <span>Open Pull Request</span>
                       </>
                     )}
                   </button>

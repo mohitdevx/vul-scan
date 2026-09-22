@@ -163,20 +163,53 @@ async function collectFiles(dir: string, baseDir: string): Promise<string[]> {
   return result
 }
 
-export async function runSecurityScan(repoUrl: string, branch: string = 'main'): Promise<ScanResult> {
+export async function runSecurityScan(repoUrl: string, branch?: string): Promise<ScanResult> {
   const startTime = Date.now()
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vulscan-engine-'))
+  let activeBranch = branch?.trim() || ''
 
   try {
-    logger.info(`Cloning repository ${repoUrl} [branch: ${branch}] for AST analysis into ${tmpDir}`)
+    logger.info(`Cloning repository ${repoUrl} [branch: ${activeBranch || 'default'}] for AST analysis into ${tmpDir}`)
 
-    // Shallow clone target branch
-    await execFileAsync('git', ['clone', '--depth', '1', '-b', branch, repoUrl, tmpDir], {
-      timeout: 45000,
-    })
+    // Shallow clone target branch with fallback to remote default branch
+    try {
+      if (activeBranch) {
+        await execFileAsync('git', ['clone', '--depth', '1', '-b', activeBranch, repoUrl, tmpDir], {
+          timeout: 45000,
+        })
+      } else {
+        await execFileAsync('git', ['clone', '--depth', '1', repoUrl, tmpDir], {
+          timeout: 45000,
+        })
+      }
+    } catch (cloneErr: any) {
+      if (activeBranch && (cloneErr.message.includes('Remote branch') || cloneErr.message.includes('not found') || cloneErr.message.includes('fatal:'))) {
+        logger.warn(`Branch '${activeBranch}' failed to clone for ${repoUrl}. Falling back to repository default branch...`)
+        await fs.rm(tmpDir, { recursive: true, force: true })
+        await fs.mkdir(tmpDir, { recursive: true })
+        await execFileAsync('git', ['clone', '--depth', '1', repoUrl, tmpDir], {
+          timeout: 45000,
+        })
+      } else {
+        throw cloneErr
+      }
+    }
+
+    // Determine actual branch cloned
+    try {
+      const { stdout: headBranch } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+        cwd: tmpDir,
+        timeout: 5000,
+      })
+      if (headBranch && headBranch.trim() && headBranch.trim() !== 'HEAD') {
+        activeBranch = headBranch.trim()
+      }
+    } catch {
+      // Ignore
+    }
 
     const targetFiles = await collectFiles(tmpDir, tmpDir)
-    logger.info(`Collected ${targetFiles.length} JavaScript/TypeScript files for AST analysis`)
+    logger.info(`Collected ${targetFiles.length} JavaScript/TypeScript files for AST analysis on branch [${activeBranch}]`)
 
     let allFindings: Finding[] = []
     const filesMap = new Map<string, string>()
@@ -235,6 +268,7 @@ export async function runSecurityScan(repoUrl: string, branch: string = 'main'):
       findings: allFindings,
       scannedFilesCount,
       durationMs,
+      actualBranch: activeBranch || 'main',
       aiValidated: config.aiValidationEnabled,
       aiConfirmedCount,
       aiFalsePositiveCount,

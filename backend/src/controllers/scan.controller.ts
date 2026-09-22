@@ -17,7 +17,7 @@ function normalizeRepoUrl(url: string): string {
 
 const triggerScanSchema = z.object({
   repoUrl: z.string().min(1, 'Valid repository URL required').transform(normalizeRepoUrl),
-  branch: z.string().optional().default('main'),
+  branch: z.string().optional().default(''),
 })
 
 function extractRepoName(url: string): string {
@@ -63,11 +63,25 @@ export async function triggerScan(req: Request, res: Response, next: NextFunctio
 
     const { repoUrl, branch } = triggerScanSchema.parse(req.body)
     const repoName = extractRepoName(repoUrl)
-    const scanBranch = branch || 'main'
+    const requestedBranch = branch?.trim() || ''
 
-    logger.info(`Starting AST security scan for user ${userId}: ${repoUrl} [${scanBranch}]`)
+    logger.info(`Starting AST security scan for user ${userId}: ${repoUrl} [${requestedBranch || 'default'}]`)
 
-    // 1. Ensure Repository record exists for this user
+    // 1. Execute Real AST Security Scan with XSS, SQLi, and CMDi Engines
+    let scanResult: ScanResult
+    try {
+      scanResult = await runSecurityScan(repoUrl, requestedBranch)
+    } catch (scanErr: any) {
+      logger.error(`Error running AST security scan for ${repoUrl}: ${scanErr.message}`)
+      res.status(400).json({
+        error: `Failed to clone or analyze repository '${repoName}': ${scanErr.message}`,
+      })
+      return
+    }
+
+    const finalBranch = scanResult.actualBranch || requestedBranch || 'main'
+
+    // 2. Ensure Repository record exists for this user
     let repository = await prisma.repository.findFirst({
       where: { userId, url: repoUrl },
     })
@@ -77,27 +91,15 @@ export async function triggerScan(req: Request, res: Response, next: NextFunctio
         data: {
           name: repoName,
           url: repoUrl,
-          defaultBranch: scanBranch,
+          defaultBranch: finalBranch,
           userId,
         },
       })
     } else {
       await prisma.repository.update({
         where: { id: repository.id },
-        data: { defaultBranch: scanBranch, updatedAt: new Date() },
+        data: { defaultBranch: finalBranch, updatedAt: new Date() },
       })
-    }
-
-    // 2. Execute Real AST Security Scan with XSS, SQLi, and CMDi Engines
-    let scanResult: ScanResult
-    try {
-      scanResult = await runSecurityScan(repoUrl, scanBranch)
-    } catch (scanErr: any) {
-      logger.error(`Error running AST security scan for ${repoUrl}: ${scanErr.message}`)
-      res.status(400).json({
-        error: `Failed to clone or analyze repository '${repoName}' on branch '${scanBranch}': ${scanErr.message}`,
-      })
-      return
     }
 
     const findings = scanResult.findings
@@ -111,7 +113,7 @@ export async function triggerScan(req: Request, res: Response, next: NextFunctio
       data: {
         repoUrl,
         repoName,
-        branch: scanBranch,
+        branch: finalBranch,
         status: 'completed',
         findingsCount: findings.length,
         highCount,
@@ -675,7 +677,6 @@ export async function exportScanReport(req: Request, res: Response, next: NextFu
       repoName: scan.repoName || scan.repository?.name,
       repoUrl: scan.repoUrl,
       branch: scan.branch,
-      commitSha: scan.commitSha || undefined,
       durationMs: scan.durationMs,
       createdAt: scan.createdAt,
       findings,

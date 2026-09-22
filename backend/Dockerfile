@@ -3,11 +3,11 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 RUN apk add --no-cache git
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@11.8.0 --activate
 
 COPY package.json ./
 COPY prisma ./prisma
-RUN pnpm install
+RUN pnpm install --ignore-scripts
 RUN pnpm prisma generate
 
 COPY tsconfig.json ./
@@ -19,14 +19,14 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 
 RUN apk add --no-cache git
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@11.8.0 --activate
 
 ENV NODE_ENV=production
 ENV PORT=4000
 
 COPY package.json ./
 COPY prisma ./prisma
-RUN pnpm install --prod
+RUN pnpm install --prod --ignore-scripts
 RUN pnpm prisma generate
 
 COPY --from=builder /app/dist ./dist

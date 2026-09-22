@@ -54,6 +54,7 @@ export interface ScanResult {
   findings: Finding[]
   scannedFilesCount: number
   durationMs: number
+  actualBranch?: string
   aiValidated?: boolean
   aiConfirmedCount?: number
   aiFalsePositiveCount?: number

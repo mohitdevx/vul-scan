@@ -1,14 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import {
-  RiShieldCheckLine,
-  RiGitBranchLine,
-  RiGithubLine,
-  RiCheckLine,
-  RiLoader4Line,
-  RiTimeLine,
-  RiAlertLine,
-  RiCloseLine,
-} from '@remixicon/react'
+import { RiCloseLine, RiAlertLine } from '@remixicon/react'
+import { Button } from '../atoms/Button'
 
 export interface ScanProgressProps {
   isOpen: boolean
@@ -18,38 +10,12 @@ export interface ScanProgressProps {
   onClose?: () => void
 }
 
-interface Step {
-  id: string
-  title: string
-  description: string
-  weight: number
-}
-
-const SCAN_STEPS: Step[] = [
-  {
-    id: 'clone',
-    title: 'Cloning Repository',
-    description: 'Fetching repository snapshot from GitHub',
-    weight: 25,
-  },
-  {
-    id: 'analysis',
-    title: 'Static Analysis',
-    description: 'Scanning source files for security vulnerabilities and injection sinks',
-    weight: 35,
-  },
-  {
-    id: 'triage',
-    title: 'Security Triage',
-    description: 'Verifying data flow and sanitization contexts',
-    weight: 25,
-  },
-  {
-    id: 'report',
-    title: 'Generating Report',
-    description: 'Compiling vulnerability findings and remediation guidance',
-    weight: 15,
-  },
+const ACTION_PHASES = [
+  { atSeconds: 0, text: 'Connecting to repository snapshot...', progress: 15 },
+  { atSeconds: 1.5, text: 'Parsing JavaScript & TypeScript ASTs...', progress: 38 },
+  { atSeconds: 3.5, text: 'Tracing source-to-sink taint flows...', progress: 65 },
+  { atSeconds: 6, text: 'Validating sanitization and escape boundaries...', progress: 84 },
+  { atSeconds: 9, text: 'Compiling security findings and audit summary...', progress: 95 },
 ]
 
 export const ScanProgressModal: React.FC<ScanProgressProps> = ({
@@ -60,43 +26,33 @@ export const ScanProgressModal: React.FC<ScanProgressProps> = ({
   onClose,
 }) => {
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
-  const [currentStepIndex, setCurrentStepIndex] = useState(0)
-  const [progressPercent, setProgressPercent] = useState(10)
+  const [currentAction, setCurrentAction] = useState(ACTION_PHASES[0].text)
+  const [progress, setProgress] = useState(ACTION_PHASES[0].progress)
 
-  // Timer & progress simulation while scan request is in flight
   useEffect(() => {
     if (!isOpen || error) return
 
     setElapsedSeconds(0)
-    setCurrentStepIndex(0)
-    setProgressPercent(15)
+    setCurrentAction(ACTION_PHASES[0].text)
+    setProgress(ACTION_PHASES[0].progress)
+
+    const startTime = Date.now()
 
     const timer = setInterval(() => {
-      setElapsedSeconds(prev => prev + 1)
-    }, 1000)
+      const elapsed = (Date.now() - startTime) / 1000
+      setElapsedSeconds(Math.floor(elapsed))
 
-    // Progressive stage transitions
-    const step1Timer = setTimeout(() => {
-      setCurrentStepIndex(1)
-      setProgressPercent(45)
-    }, 1800)
+      let activePhase = ACTION_PHASES[0]
+      for (const phase of ACTION_PHASES) {
+        if (elapsed >= phase.atSeconds) {
+          activePhase = phase
+        }
+      }
+      setCurrentAction(activePhase.text)
+      setProgress(activePhase.progress)
+    }, 250)
 
-    const step2Timer = setTimeout(() => {
-      setCurrentStepIndex(2)
-      setProgressPercent(75)
-    }, 3800)
-
-    const step3Timer = setTimeout(() => {
-      setCurrentStepIndex(3)
-      setProgressPercent(92)
-    }, 6500)
-
-    return () => {
-      clearInterval(timer)
-      clearTimeout(step1Timer)
-      clearTimeout(step2Timer)
-      clearTimeout(step3Timer)
-    }
+    return () => clearInterval(timer)
   }, [isOpen, error])
 
   if (!isOpen) return null
@@ -108,161 +64,73 @@ export const ScanProgressModal: React.FC<ScanProgressProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in font-sans">
-      <div className="relative w-full max-w-xl bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden">
-        {/* Top Gradient Glow Accent */}
-        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 via-indigo-500 to-emerald-500" />
-
-        {/* Modal Header */}
-        <div className="p-6 pb-4 border-b border-zinc-800/80">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-blue-400">
-                <RiShieldCheckLine className="w-5 h-5 animate-pulse" />
-              </div>
-              <div>
-                <h3 className="text-base font-semibold text-zinc-100">
-                  {error ? 'Scan Failed' : 'Scanning Repository'}
-                </h3>
-                <div className="flex items-center gap-2 mt-1 text-xs font-mono text-zinc-400">
-                  <div className="flex items-center gap-1 text-zinc-300 max-w-[240px] truncate">
-                    <RiGithubLine className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
-                    <span className="truncate">{repoUrl}</span>
-                  </div>
-                  <span className="text-zinc-600">&bull;</span>
-                  <div className="flex items-center gap-1 text-zinc-400">
-                    <RiGitBranchLine className="w-3.5 h-3.5 text-zinc-500" />
-                    <span>{branch}</span>
-                  </div>
-                </div>
-              </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs font-sans">
+      <div className="relative w-full max-w-md bg-surface border border-border rounded-xl shadow-2xl overflow-hidden p-6 space-y-5 text-text-primary">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 min-w-0">
+            {!error ? (
+              <div className="w-4 h-4 border-2 border-border border-t-text-primary rounded-full animate-spin shrink-0 mt-0.5" />
+            ) : (
+              <RiAlertLine className="w-4 h-4 text-danger shrink-0 mt-0.5" />
+            )}
+            <div className="min-w-0">
+              <h3 className="text-sm font-medium text-text-primary">
+                {error ? 'Scan failed' : 'Scanning repository'}
+              </h3>
+              <p className="text-xs font-mono text-text-muted truncate mt-0.5">
+                {repoUrl} &bull; {branch}
+              </p>
             </div>
+          </div>
 
-            {error && onClose && (
-              <button
-                onClick={onClose}
-                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
-              >
-                <RiCloseLine className="w-5 h-5" />
-              </button>
+          {error && onClose && (
+            <button
+              onClick={onClose}
+              className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors cursor-pointer"
+              title="Close"
+            >
+              <RiCloseLine className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Content */}
+        {error ? (
+          <div className="space-y-4">
+            <div className="p-3.5 rounded-lg bg-danger/10 border border-danger/20 text-danger text-xs space-y-1.5">
+              <div className="font-medium">Error details</div>
+              <p className="text-text-secondary leading-relaxed font-mono break-words">{error}</p>
+            </div>
+            {onClose && (
+              <div className="flex justify-end pt-1">
+                <Button variant="secondary" size="sm" onClick={onClose}>
+                  Close
+                </Button>
+              </div>
             )}
           </div>
-        </div>
-
-        {/* Modal Body */}
-        <div className="p-6 space-y-6">
-          {error ? (
-            <div className="p-4 rounded-xl bg-red-950/30 border border-red-850/50 text-red-300 space-y-2 text-xs font-mono">
-              <div className="flex items-center gap-2 text-red-400 font-semibold text-sm">
-                <RiAlertLine className="w-4 h-4 shrink-0" />
-                <span>Execution Error</span>
-              </div>
-              <p className="text-red-300/90 leading-relaxed font-sans">{error}</p>
+        ) : (
+          <div className="space-y-3 pt-1">
+            {/* Active Changing Progress Bar */}
+            <div className="w-full h-1.5 bg-surface-muted rounded-full overflow-hidden">
+              <div
+                className="h-full bg-text-primary rounded-full transition-all duration-500 ease-out"
+                style={{ width: `${progress}%` }}
+              />
             </div>
-          ) : (
-            <>
-              {/* Progress Bar & Status */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-xs font-mono">
-                  <span className="text-zinc-300 font-medium">
-                    {SCAN_STEPS[currentStepIndex]?.title || 'Processing...'}
-                  </span>
-                  <span className="text-zinc-400">{progressPercent}%</span>
-                </div>
-                <div className="w-full h-2 rounded-full bg-zinc-900 border border-zinc-800/80 overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-500 ease-out"
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
-              </div>
 
-              {/* Step Flow List */}
-              <div className="space-y-3 pt-1">
-                {SCAN_STEPS.map((step, idx) => {
-                  const isDone = currentStepIndex > idx
-                  const isCurrent = currentStepIndex === idx
-
-                  return (
-                    <div
-                      key={step.id}
-                      className={`flex items-start gap-3 p-2.5 rounded-xl transition-all ${
-                        isCurrent
-                          ? 'bg-zinc-900/90 border border-zinc-800 text-zinc-100'
-                          : isDone
-                          ? 'text-zinc-400 opacity-80'
-                          : 'text-zinc-600 opacity-40'
-                      }`}
-                    >
-                      <div className="mt-0.5 shrink-0">
-                        {isDone ? (
-                          <div className="w-5 h-5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center">
-                            <RiCheckLine className="w-3 h-3 stroke-[2.5]" />
-                          </div>
-                        ) : isCurrent ? (
-                          <div className="w-5 h-5 rounded-full bg-blue-500/20 border border-blue-500/40 text-blue-400 flex items-center justify-center">
-                            <RiLoader4Line className="w-3 h-3 animate-spin" />
-                          </div>
-                        ) : (
-                          <div className="w-5 h-5 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-600 flex items-center justify-center text-[10px] font-mono">
-                            0{idx + 1}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2">
-                          <h4
-                            className={`text-xs font-medium ${
-                              isCurrent ? 'text-zinc-100' : isDone ? 'text-zinc-300' : 'text-zinc-500'
-                            }`}
-                          >
-                            {step.title}
-                          </h4>
-                          {isCurrent && (
-                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                              Active
-                            </span>
-                          )}
-                          {isDone && (
-                            <span className="text-[10px] font-mono text-emerald-400">
-                              Done
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-zinc-400 mt-0.5 leading-snug truncate">
-                          {step.description}
-                        </p>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Modal Footer */}
-        <div className="p-4 px-6 bg-zinc-950 border-t border-zinc-900 flex items-center justify-between text-xs font-mono text-zinc-500">
-          <div className="flex items-center gap-1.5">
-            <RiTimeLine className="w-3.5 h-3.5 text-zinc-400" />
-            <span>Elapsed: {formatTime(elapsedSeconds)}</span>
+            {/* Running Text Action Visualization */}
+            <div className="flex items-center justify-between text-xs font-mono text-text-muted gap-2">
+              <span className="truncate text-text-secondary transition-all duration-300">
+                {currentAction}
+              </span>
+              <span className="shrink-0 text-text-muted">
+                {formatTime(elapsedSeconds)}
+              </span>
+            </div>
           </div>
-
-          {error ? (
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium cursor-pointer transition-colors"
-            >
-              Close
-            </button>
-          ) : (
-            <span className="text-zinc-500 text-[11px]">
-              AST static analysis &bull; Fast triage
-            </span>
-          )}
-        </div>
+        )}
       </div>
     </div>
   )

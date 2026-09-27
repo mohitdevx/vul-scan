@@ -23,6 +23,23 @@ export const KNOWN_SANITIZERS = new Set([
   'purify',
 ])
 
+// Known SQL sanitizers and escape methods
+export const KNOWN_SQL_SANITIZERS = new Set([
+  'escape',
+  'escapeliteral',
+  'escapeidentifier',
+  'sqlescape',
+  'clean',
+  'sanitize',
+  'sqlstring',
+  'mysql.escape',
+  'pool.escape',
+  'connection.escape',
+  'db.escape',
+  'validator.escape',
+])
+
+
 // HTTP Source indicators (Express, Fastify, Koa, Next.js, Node http)
 export const HTTP_SOURCE_PROPERTIES = new Set([
   'query',
@@ -515,3 +532,275 @@ export function isDynamicOrTainted(
 
   return { tainted: false }
 }
+
+/**
+ * Checks if an expression represents a safe numeric, integer, or boolean cast
+ * (e.g. parseInt, parseFloat, Number(x), +x, Math.floor, Boolean(x))
+ * which is mathematically impossible to inject SQL syntax into.
+ */
+export function isSafeNumericOrBooleanCast(node: any, scope?: any, depth = 0): boolean {
+  if (!node || depth > 8) return false
+
+  // Numeric and Boolean literals are safe
+  if (node.type === 'NumericLiteral' || node.type === 'BooleanLiteral' || node.type === 'NullLiteral') {
+    return true
+  }
+
+  // Unary expressions: +x, -x, !x, typeof x
+  if (node.type === 'UnaryExpression') {
+    if (node.operator === '+' || node.operator === '-' || node.operator === '!' || node.operator === '~') {
+      return true
+    }
+  }
+
+  // Binary arithmetic: a * b, a / b, a - b, a % b (non-string binary)
+  if (node.type === 'BinaryExpression') {
+    if (['-', '*', '/', '%', '**', '&', '|', '^', '>>', '<<', '>>>'].includes(node.operator)) {
+      return true
+    }
+  }
+
+  // Call Expressions: parseInt(x), parseFloat(x), Number(x), Math.floor(x), Boolean(x), BigInt(x), Date.now()
+  if (node.type === 'CallExpression') {
+    const callee = node.callee
+    if (callee.type === 'Identifier') {
+      const name = callee.name
+      if (['parseInt', 'parseFloat', 'Number', 'Boolean', 'BigInt', 'isFinite', 'isNaN'].includes(name)) {
+        return true
+      }
+    }
+
+    if (callee.type === 'MemberExpression') {
+      const objName = (callee.object?.name || '').toLowerCase()
+      const propName = (callee.property?.name || callee.property?.value || '').toLowerCase()
+
+      if (objName === 'math' && ['floor', 'ceil', 'round', 'abs', 'min', 'max', 'trunc', 'sqrt', 'pow'].includes(propName)) {
+        return true
+      }
+      if (objName === 'number' && ['parseint', 'parsefloat', 'isinteger', 'issafeinteger', 'isnan'].includes(propName)) {
+        return true
+      }
+      if (objName === 'date' && propName === 'now') {
+        return true
+      }
+    }
+  }
+
+  // Type assertions / Parentheses: (x as number)
+  if (node.type === 'TSAsExpression' || node.type === 'TSTypeAssertion' || node.type === 'ParenthesizedExpression') {
+    return isSafeNumericOrBooleanCast(node.expression, scope, depth + 1)
+  }
+
+  // Identifier lookup in scope
+  if (node.type === 'Identifier' && scope) {
+    const binding = scope.getBinding ? scope.getBinding(node.name) : null
+    if (binding && binding.path && binding.path.node) {
+      const init = binding.path.node.init
+      if (init) {
+        return isSafeNumericOrBooleanCast(init, binding.scope || scope, depth + 1)
+      }
+    }
+  }
+
+  return false
+}
+
+/**
+ * Checks if an expression is passed through a known SQL escaping/sanitizing function.
+ * (e.g. mysql.escape(val), pool.escape(val), sqlstring.escape(val), escapeLiteral(val))
+ */
+export function isSqlSanitizedExpression(node: any, scope?: any, depth = 0): boolean {
+  if (!node || depth > 8) return false
+
+  if (node.type === 'CallExpression') {
+    const callee = node.callee
+
+    if (callee.type === 'MemberExpression') {
+      const propName = (callee.property?.name || callee.property?.value || '').toLowerCase()
+      const objName = (callee.object?.name || '').toLowerCase()
+
+      if (
+        propName === 'escape' ||
+        propName === 'escapeliteral' ||
+        propName === 'escapeidentifier' ||
+        propName === 'sqlescape' ||
+        objName === 'sqlstring' ||
+        objName === 'mysql' ||
+        propName.includes('escape') ||
+        propName.includes('sanitize')
+      ) {
+        return true
+      }
+    }
+
+    if (callee.type === 'Identifier') {
+      const name = callee.name.toLowerCase()
+      if (
+        name === 'escape' ||
+        name === 'escapeliteral' ||
+        name === 'escapeidentifier' ||
+        name === 'sqlescape' ||
+        name.includes('escape') ||
+        name.includes('sanitize')
+      ) {
+        return true
+      }
+    }
+  }
+
+  // Type assertions / Parentheses
+  if (node.type === 'TSAsExpression' || node.type === 'TSTypeAssertion' || node.type === 'ParenthesizedExpression') {
+    return isSqlSanitizedExpression(node.expression, scope, depth + 1)
+  }
+
+  // Identifier lookup in scope
+  if (node.type === 'Identifier' && scope) {
+    const binding = scope.getBinding ? scope.getBinding(node.name) : null
+    if (binding && binding.path && binding.path.node) {
+      const init = binding.path.node.init
+      if (init) {
+        return isSqlSanitizedExpression(init, binding.scope || scope, depth + 1)
+      }
+    }
+  }
+
+  return false
+}
+
+/**
+ * Deep inspection for SQL Injection taint flow.
+ * Evaluates whether an expression contains unparameterized, dynamic, untrusted values,
+ * while accurately respecting safe numeric casts, constant folding, and SQL escaping.
+ */
+export function isSqlTainted(
+  node: any,
+  scope?: any,
+  depth = 0
+): { tainted: boolean; sourceDesc?: string; isSafeCast?: boolean } {
+  if (!node || depth > 10) return { tainted: false }
+
+  // 1. Safe numeric / boolean conversions are immune to SQL injection
+  if (isSafeNumericOrBooleanCast(node, scope)) {
+    return { tainted: false, isSafeCast: true }
+  }
+
+  // 2. Safe SQL escaping functions
+  if (isSqlSanitizedExpression(node, scope)) {
+    return { tainted: false }
+  }
+
+  // 3. Static primitives are safe
+  if (
+    node.type === 'StringLiteral' ||
+    node.type === 'NumericLiteral' ||
+    node.type === 'BooleanLiteral' ||
+    node.type === 'NullLiteral'
+  ) {
+    return { tainted: false }
+  }
+
+  // 4. Static string evaluation via constant folding
+  const staticVal = evaluateStaticString(node, scope)
+  if (staticVal !== null) {
+    return { tainted: false }
+  }
+
+  // 5. Template literal: inspect dynamic expressions
+  if (node.type === 'TemplateLiteral') {
+    if (node.expressions && node.expressions.length > 0) {
+      for (const expr of node.expressions) {
+        // If the expression is a safe number/boolean cast or sanitized, it's safe
+        if (isSafeNumericOrBooleanCast(expr, scope) || isSqlSanitizedExpression(expr, scope)) {
+          continue
+        }
+        const exprCheck = isSqlTainted(expr, scope, depth + 1)
+        if (exprCheck.tainted) {
+          return exprCheck
+        }
+      }
+      return { tainted: false }
+    }
+    return { tainted: false }
+  }
+
+  // 6. Binary expression (+ concatenation)
+  if (node.type === 'BinaryExpression' && node.operator === '+') {
+    const leftStatic = evaluateStaticString(node.left, scope)
+    const rightStatic = evaluateStaticString(node.right, scope)
+
+    if (leftStatic !== null && rightStatic !== null) {
+      return { tainted: false }
+    }
+
+    // Check left operand
+    if (leftStatic === null && !isSafeNumericOrBooleanCast(node.left, scope) && !isSqlSanitizedExpression(node.left, scope)) {
+      const leftCheck = isSqlTainted(node.left, scope, depth + 1)
+      if (leftCheck.tainted) return leftCheck
+    }
+
+    // Check right operand
+    if (rightStatic === null && !isSafeNumericOrBooleanCast(node.right, scope) && !isSqlSanitizedExpression(node.right, scope)) {
+      const rightCheck = isSqlTainted(node.right, scope, depth + 1)
+      if (rightCheck.tainted) return rightCheck
+    }
+
+    return { tainted: false }
+  }
+
+  // 7. Logical and conditional expressions
+  if (node.type === 'LogicalExpression') {
+    const left = isSqlTainted(node.left, scope, depth + 1)
+    if (left.tainted) return left
+    const right = isSqlTainted(node.right, scope, depth + 1)
+    if (right.tainted) return right
+  }
+
+  if (node.type === 'ConditionalExpression') {
+    const c = isSqlTainted(node.consequent, scope, depth + 1)
+    if (c.tainted) return c
+    const a = isSqlTainted(node.alternate, scope, depth + 1)
+    if (a.tainted) return a
+  }
+
+  // 8. Type Casts
+  if (node.type === 'TSAsExpression' || node.type === 'TSTypeAssertion' || node.type === 'ParenthesizedExpression') {
+    return isSqlTainted(node.expression, scope, depth + 1)
+  }
+
+  // 9. HTTP Source check
+  const httpCheck = isHttpSource(node, scope, depth + 1)
+  if (httpCheck.isSource) {
+    return { tainted: true, sourceDesc: httpCheck.detail }
+  }
+
+  // 10. DOM Source check
+  const domCheck = isDomSource(node, scope, depth + 1)
+  if (domCheck.isSource) {
+    return { tainted: true, sourceDesc: domCheck.detail }
+  }
+
+  // 11. Database Source check
+  const dbCheck = isDatabaseSource(node, scope, depth + 1)
+  if (dbCheck.isSource) {
+    return { tainted: true, sourceDesc: dbCheck.detail }
+  }
+
+  // 12. Identifier scope tracing
+  if (node.type === 'Identifier' && scope) {
+    const binding = scope.getBinding ? scope.getBinding(node.name) : null
+    if (binding && binding.path && binding.path.node) {
+      const init = binding.path.node.init
+      if (init) {
+        return isSqlTainted(init, binding.scope || scope, depth + 1)
+      }
+      if (binding.kind === 'param') {
+        return { tainted: true, sourceDesc: `Parameter '${node.name}'` }
+      }
+    }
+    return { tainted: true, sourceDesc: `Dynamic variable '${node.name}'` }
+  }
+
+  return { tainted: false }
+}
+
+

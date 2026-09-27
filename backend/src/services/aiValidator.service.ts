@@ -69,6 +69,11 @@ const KNOWN_SANITIZER_KEYWORDS = [
   'securefilters',
   'striptags',
   'xss(',
+  'sqlstring',
+  'mysql.escape',
+  'escapeliteral',
+  'escapeidentifier',
+  'sqlescape',
 ]
 
 const KNOWN_NUMERIC_CAST_KEYWORDS = [

@@ -4,6 +4,7 @@ import {
   RiTerminalBoxLine,
   RiShieldKeyholeLine,
   RiCookieLine,
+  RiDatabase2Line,
   RiAlertLine,
   RiCheckLine,
 } from '@remixicon/react'
@@ -14,7 +15,7 @@ interface AnalyzerSpec {
   cwe: string
   title: string
   shortScope: string
-  severity: 'HIGH' | 'MEDIUM'
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM'
   icon: ElementType
   description: string
   sinks: string[]
@@ -29,23 +30,23 @@ interface AnalyzerSpec {
 
 const ANALYZERS: AnalyzerSpec[] = [
   {
-    id: 'cmd-injection',
-    cwe: 'CWE-78',
-    title: 'Command Injection',
-    shortScope: 'OS shell execution',
+    id: 'sqli',
+    cwe: 'CWE-89',
+    title: 'SQL Injection (SQLi)',
+    shortScope: 'Raw query & ORM injection',
     severity: 'HIGH',
-    icon: RiTerminalBoxLine,
+    icon: RiDatabase2Line,
     description:
-      'Traverses the abstract syntax tree to identify dynamic command construction and unescaped parameter passing into OS execution primitives.',
-    sinks: ['child_process.exec', 'execSync', 'spawn({ shell: true })', 'eval()'],
-    vulnerableSnippet: `// Flagged: Dynamic argument concatenated into shell sink\nconst out = execSync("ping -c 1 " + req.query.host);`,
-    vulnerableHighlight: `"ping -c 1 " + req.query.host`,
-    vulnerableLabel: 'Unsanitized user parameter passed directly to system shell sink',
-    safeSnippet: `// Remediated: Parameterized execution without shell wrapper\nexecFile("ping", ["-c", "1", req.query.host]);`,
-    safeHighlight: `["-c", "1", req.query.host]`,
-    safeLabel: 'Direct binary execution with isolated arguments array',
+      'Performs AST taint propagation across database drivers (pg, mysql2, sqlite3) and ORMs (Prisma, Knex, Sequelize, TypeORM) to detect unparameterized query concatenation.',
+    sinks: ['db.query()', 'prisma.$queryRawUnsafe()', 'knex.raw()', 'whereRaw()'],
+    vulnerableSnippet: `// Flagged: Dynamic user parameter concatenated into raw query sink\nconst user = await db.query("SELECT * FROM users WHERE name = '" + req.query.name + "'");`,
+    vulnerableHighlight: `"SELECT * FROM users WHERE name = '" + req.query.name + "'`,
+    vulnerableLabel: 'Unsanitized user input concatenated into raw database execution sink',
+    safeSnippet: `// Remediated: Parameterized query placeholders with bound values array\nconst user = await db.query("SELECT * FROM users WHERE name = $1", [req.query.name]);`,
+    safeHighlight: `["SELECT * FROM users WHERE name = $1", [req.query.name]]`,
+    safeLabel: 'Prepared query statement with isolated parameter array binding',
     remediation:
-      'Use execFile or spawn with argument arrays instead of launching an intermediate system shell with dynamic strings.',
+      'Always use parameterized queries with prepared statement placeholders ($1, ?, :param) or safe tagged templates instead of raw string concatenation.',
   },
   {
     id: 'xss',
@@ -67,10 +68,30 @@ const ANALYZERS: AnalyzerSpec[] = [
       'Avoid raw HTML assignment sinks. Use textContent, standard JSX string children, or explicit contextual sanitizers.',
   },
   {
+    id: 'cmd-injection',
+    cwe: 'CWE-78',
+    title: 'Command Injection',
+    shortScope: 'OS shell execution',
+    severity: 'HIGH',
+    icon: RiTerminalBoxLine,
+    description:
+      'Traverses the abstract syntax tree to identify dynamic command construction and unescaped parameter passing into OS execution primitives.',
+    sinks: ['child_process.exec', 'execSync', 'spawn({ shell: true })', 'eval()'],
+    vulnerableSnippet: `// Flagged: Dynamic argument concatenated into shell sink\nconst out = execSync("ping -c 1 " + req.query.host);`,
+    vulnerableHighlight: `"ping -c 1 " + req.query.host`,
+    vulnerableLabel: 'Unsanitized user parameter passed directly to system shell sink',
+    safeSnippet: `// Remediated: Parameterized execution without shell wrapper\nexecFile("ping", ["-c", "1", req.query.host]);`,
+    safeHighlight: `["-c", "1", req.query.host]`,
+    safeLabel: 'Direct binary execution with isolated arguments array',
+    remediation:
+      'Use execFile or spawn with argument arrays instead of launching an intermediate system shell with dynamic strings.',
+  },
+  {
     id: 'auth-flow',
     cwe: 'CWE-287',
     title: 'Authentication Flow',
     shortScope: 'Token & route validation',
+
     severity: 'HIGH',
     icon: RiShieldKeyholeLine,
     description:

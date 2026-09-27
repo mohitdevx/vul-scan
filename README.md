@@ -12,6 +12,8 @@ VulnScan is a modern static application security testing (SAST) platform designe
   Deep traversal of AST nodes using Babel parser. Accurately maps sources (`req.query`, `req.body`, `window.location`) to dangerous sinks (`exec`, `eval`, `innerHTML`, SQL query builders) while checking sanitization barriers.
 - **Local AI Verification & Triage**
   Optional verification pipeline using local LLMs (via Ollama and Qwen 2.5 Coder). Filters out unreachable paths and contextually harmless code before alerting engineers.
+- **Multi-Branch & Granular Branch Scanning**
+  Scan individual branches on demand or analyze all remote branches across a repository concurrently to maintain posture across staging, develop, and feature branches.
 - **1-Click Fix & GitHub PR Dispatch**
   Generates contextual diffs and code patches. Review, edit patches in-place, and open automated Pull Requests on GitHub directly from the web interface.
 - **Multi-Format Security Reporting**

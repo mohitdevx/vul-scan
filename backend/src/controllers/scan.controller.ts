@@ -18,6 +18,7 @@ function normalizeRepoUrl(url: string): string {
 const triggerScanSchema = z.object({
   repoUrl: z.string().min(1, 'Valid repository URL required').transform(normalizeRepoUrl),
   branch: z.string().optional().default(''),
+  allBranches: z.boolean().optional().default(false),
 })
 
 function extractRepoName(url: string): string {
@@ -61,10 +62,111 @@ export async function triggerScan(req: Request, res: Response, next: NextFunctio
       return
     }
 
-    const { repoUrl, branch } = triggerScanSchema.parse(req.body)
+    const { repoUrl, branch, allBranches } = triggerScanSchema.parse(req.body)
     const repoName = extractRepoName(repoUrl)
     const requestedBranch = branch?.trim() || ''
+    const isAllBranches = allBranches || requestedBranch === '__ALL__' || requestedBranch === '*'
 
+    // Multi-branch scan mode
+    if (isAllBranches) {
+      logger.info(`Starting multi-branch AST security scan for user ${userId}: ${repoUrl} [ALL BRANCHES]`)
+
+      let targetBranches: string[] = []
+      let defaultBranch = 'main'
+      try {
+        const branchInfo = await getRemoteBranches(repoUrl)
+        targetBranches = branchInfo.branches || []
+        defaultBranch = branchInfo.defaultBranch || 'main'
+      } catch (branchErr: any) {
+        logger.warn(`Failed to fetch remote branch list for ${repoUrl}: ${branchErr.message}. Defaulting to main branch.`)
+        targetBranches = ['main']
+      }
+
+      if (targetBranches.length === 0) {
+        targetBranches = [defaultBranch || 'main']
+      }
+
+      // Ensure Repository record exists for this user
+      let repository = await prisma.repository.findFirst({
+        where: { userId, url: repoUrl },
+      })
+
+      if (!repository) {
+        repository = await prisma.repository.create({
+          data: {
+            name: repoName,
+            url: repoUrl,
+            defaultBranch,
+            userId,
+          },
+        })
+      } else {
+        await prisma.repository.update({
+          where: { id: repository.id },
+          data: { defaultBranch, updatedAt: new Date() },
+        })
+      }
+
+      const createdScans: any[] = []
+      const branchErrors: string[] = []
+
+      for (const b of targetBranches) {
+        try {
+          logger.info(`Scanning branch '${b}' for repository ${repoUrl}...`)
+          const scanResult = await runSecurityScan(repoUrl, b)
+          const finalBranch = scanResult.actualBranch || b
+          const findings = scanResult.findings
+          const highCount = findings.filter(f => f.severity === 'HIGH' || f.severity === 'CRITICAL').length
+          const mediumCount = findings.filter(f => f.severity === 'MEDIUM').length
+          const lowCount = findings.filter(f => f.severity === 'LOW').length
+
+          const scan = await prisma.scan.create({
+            data: {
+              repoUrl,
+              repoName,
+              branch: finalBranch,
+              status: 'completed',
+              findingsCount: findings.length,
+              highCount,
+              mediumCount,
+              lowCount,
+              durationMs: scanResult.durationMs,
+              findingsJson: JSON.stringify(findings),
+              repositoryId: repository.id,
+              userId,
+              completedAt: new Date(),
+            },
+          })
+
+          createdScans.push({
+            ...scan,
+            findings,
+          })
+        } catch (bErr: any) {
+          logger.error(`Failed to scan branch '${b}' for ${repoUrl}: ${bErr.message}`)
+          branchErrors.push(`Branch '${b}': ${bErr.message}`)
+        }
+      }
+
+      if (createdScans.length === 0 && branchErrors.length > 0) {
+        res.status(400).json({
+          error: `Failed to scan branches: ${branchErrors.join('; ')}`,
+        })
+        return
+      }
+
+      const primaryScan = createdScans.find(s => s.findingsCount > 0) || createdScans[0]
+
+      res.status(201).json({
+        message: `Successfully scanned ${createdScans.length} branch${createdScans.length === 1 ? '' : 'es'}`,
+        scan: primaryScan,
+        scans: createdScans,
+        scannedBranches: targetBranches,
+      })
+      return
+    }
+
+    // Single-branch scan mode
     logger.info(`Starting AST security scan for user ${userId}: ${repoUrl} [${requestedBranch || 'default'}]`)
 
     // 1. Execute Real AST Security Scan with XSS, SQLi, and CMDi Engines

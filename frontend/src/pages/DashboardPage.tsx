@@ -63,6 +63,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [activeTab, setActiveTab] = useState<'repos' | 'scans'>('repos')
   const [repoUrlInput, setRepoUrlInput] = useState('')
   const [branchInput, setBranchInput] = useState('main')
+  const [repoBranches, setRepoBranches] = useState<Record<string, string>>({})
   const [searchQuery, setSearchQuery] = useState('')
   const [scanningRepoId, setScanningRepoId] = useState<string | null>(null)
   const [isScanningNew, setIsScanningNew] = useState(false)
@@ -78,6 +79,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     branch: 'main',
     error: null,
   })
+
+  const handleRepoBranchChange = (repoId: string, branch: string) => {
+    setRepoBranches(prev => ({ ...prev, [repoId]: branch }))
+  }
 
   // Fetch all dashboard data
   const fetchData = useCallback(async (isSilent = false) => {
@@ -122,35 +127,53 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         setIsScanningNew(true)
       }
 
+      const isAll = targetBranch === '__ALL__' || targetBranch === '*'
+
       setScanModal({
         isOpen: true,
         repoUrl: cleanUrl,
-        branch: targetBranch || 'main',
+        branch: isAll ? 'All branches' : (targetBranch || 'main'),
         error: null,
       })
 
       try {
         const result = await scanApi.trigger({
           repoUrl: cleanUrl,
-          branch: targetBranch || 'main',
+          branch: isAll ? undefined : (targetBranch || 'main'),
+          allBranches: isAll,
         })
 
         const scan = result.scan
-        const findingsCount = scan.findingsCount || 0
+        const scansList = result.scans || (scan ? [scan] : [])
+        const totalFindings = scansList.reduce((acc, s) => acc + (s.findingsCount || 0), 0)
+        const totalHigh = scansList.reduce((acc, s) => acc + (s.highCount || 0), 0)
+        const totalMedium = scansList.reduce((acc, s) => acc + (s.mediumCount || 0), 0)
 
-        if (findingsCount > 0) {
-          info(
-            `Scan identified ${findingsCount} potential vulnerabilities (${scan.highCount} High, ${scan.mediumCount} Medium).`,
-            'Scan Completed'
-          )
-        } else {
-          success('Clean scan: 0 security vulnerabilities detected.', 'Scan Completed')
+        if (isAll && scansList.length > 1) {
+          if (totalFindings > 0) {
+            info(
+              `Scanned ${scansList.length} branches: ${totalFindings} total vulnerabilities detected (${totalHigh} High, ${totalMedium} Medium).`,
+              'Multi-Branch Scan Completed'
+            )
+          } else {
+            success(`Scanned ${scansList.length} branches: 0 security vulnerabilities detected.`, 'Scan Completed')
+          }
+        } else if (scan) {
+          const findingsCount = scan.findingsCount || 0
+          if (findingsCount > 0) {
+            info(
+              `Scan identified ${findingsCount} potential vulnerabilities (${scan.highCount} High, ${scan.mediumCount} Medium).`,
+              'Scan Completed'
+            )
+          } else {
+            success('Clean scan: 0 security vulnerabilities detected.', 'Scan Completed')
+          }
         }
 
         // Brief delay for user to register 100% completion in modal
         setTimeout(() => {
           setScanModal(prev => ({ ...prev, isOpen: false }))
-          if (onInspectScan) {
+          if (onInspectScan && scan) {
             onInspectScan(scan)
           }
         }, 500)
@@ -383,6 +406,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 value={branchInput}
                 onChange={setBranchInput}
                 variant="seamless"
+                showAllOption={true}
               />
             </div>
 
@@ -401,7 +425,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 ) : (
                   <>
                     <RiPlayLine className="w-3.5 h-3.5 fill-current" />
-                    <span>Scan</span>
+                    <span>{branchInput === '__ALL__' ? 'Scan All' : 'Scan'}</span>
                   </>
                 )}
               </button>
@@ -554,7 +578,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   <thead className="sticky top-0 z-10 bg-[#0e0e12] text-zinc-500 font-mono uppercase text-[10.5px]">
                     <tr>
                       <th className="py-2.5 px-5">Repository</th>
-                      <th className="py-2.5 px-4">Default Branch</th>
+                      <th className="py-2.5 px-4 w-48">Scan Branch</th>
                       <th className="py-2.5 px-4">Latest Posture</th>
                       <th className="py-2.5 px-4">Last Scanned</th>
                       <th className="py-2.5 px-5 text-right">Actions</th>
@@ -564,6 +588,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                     {filteredRepos.map(repo => {
                       const latest = repo.latestScan
                       const isScanningThis = scanningRepoId === repo.id
+                      const selectedBranch = repoBranches[repo.id] || repo.defaultBranch
+                      const isAllBranchSelected = selectedBranch === '__ALL__'
 
                       return (
                         <tr
@@ -591,12 +617,18 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                             </div>
                           </td>
 
-                          {/* Default Branch */}
-                          <td className="py-4 px-4 font-mono text-zinc-400">
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-[11px]">
-                              <RiGitBranchLine className="w-3 h-3 text-zinc-500" />
-                              {repo.defaultBranch}
-                            </span>
+                          {/* Select Branch */}
+                          <td className="py-3 px-4 font-mono text-zinc-400">
+                            <div className="w-44">
+                              <BranchSelect
+                                repoUrl={repo.url}
+                                value={selectedBranch}
+                                onChange={b => handleRepoBranchChange(repo.id, b)}
+                                variant="compact"
+                                showAllOption={true}
+                                initialDefaultBranch={repo.defaultBranch}
+                              />
+                            </div>
                           </td>
 
                           {/* Latest Scan Status */}
@@ -645,11 +677,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                                 isLoading={isScanningThis}
                                 loadingText="Scanning..."
                                 onClick={() =>
-                                  executeScan(repo.url, repo.defaultBranch, repo.id)
+                                  executeScan(repo.url, selectedBranch, repo.id)
                                 }
                                 icon={<RiPlayLine className="w-3.5 h-3.5" />}
                               >
-                                Scan Now
+                                {isAllBranchSelected ? 'Scan All' : 'Scan'}
                               </Button>
 
                               <button

@@ -204,8 +204,8 @@ export const repositoryApi = {
 }
 
 export const scanApi = {
-  trigger: (payload: { repoUrl: string; branch?: string }) =>
-    request<{ message: string; scan: ScanItem }>('/api/scan', {
+  trigger: (payload: { repoUrl: string; branch?: string; allBranches?: boolean }) =>
+    request<{ message: string; scan: ScanItem; scans?: ScanItem[]; scannedBranches?: string[] }>('/api/scan', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),

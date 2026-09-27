@@ -15,7 +15,10 @@ export interface BranchSelectProps {
   onChange: (branch: string) => void
   disabled?: boolean
   className?: string
-  variant?: 'default' | 'seamless'
+  variant?: 'default' | 'seamless' | 'compact'
+  showAllOption?: boolean
+  initialBranches?: string[]
+  initialDefaultBranch?: string
 }
 
 function isValidGitUrl(url: string): boolean {
@@ -39,9 +42,12 @@ export const BranchSelect: React.FC<BranchSelectProps> = ({
   disabled = false,
   className = '',
   variant = 'default',
+  showAllOption = false,
+  initialBranches = [],
+  initialDefaultBranch = 'main',
 }) => {
-  const [branches, setBranches] = useState<string[]>([])
-  const [defaultBranch, setDefaultBranch] = useState<string>('main')
+  const [branches, setBranches] = useState<string[]>(initialBranches)
+  const [defaultBranch, setDefaultBranch] = useState<string>(initialDefaultBranch)
   const [isLoading, setIsLoading] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
   const [searchFilter, setSearchFilter] = useState('')
@@ -128,12 +134,20 @@ export const BranchSelect: React.FC<BranchSelectProps> = ({
   const hasSyncedBranches = branches.length > 0
   const isTriggerDisabled = disabled || isLoading || (!hasSyncedBranches && !repoUrl.trim())
 
+  const isAllSelected = value === '__ALL__'
+
   const triggerClass =
     variant === 'seamless'
       ? `w-full h-9 px-3 rounded-lg flex items-center justify-between text-xs font-mono transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 ${
           isOpen
             ? 'bg-zinc-800 text-zinc-100'
             : 'bg-zinc-800/40 hover:bg-zinc-800 text-zinc-300'
+        }`
+      : variant === 'compact'
+      ? `w-full h-7 px-2 py-1 rounded bg-zinc-900 border flex items-center justify-between text-[11px] font-mono transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 ${
+          isOpen
+            ? 'border-zinc-500 bg-zinc-850 text-zinc-100'
+            : 'border-zinc-800 hover:border-zinc-700 hover:bg-zinc-850 text-zinc-300'
         }`
       : `w-full h-10 px-3 py-2 rounded-md bg-zinc-900/90 border flex items-center justify-between text-xs font-mono transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 ${
           isOpen
@@ -144,6 +158,8 @@ export const BranchSelect: React.FC<BranchSelectProps> = ({
   const popoverClass =
     variant === 'seamless'
       ? 'absolute top-full mt-2 left-0 right-0 sm:w-64 sm:right-auto z-50 rounded-xl bg-[#121216] shadow-2xl shadow-black ring-1 ring-white/10 overflow-hidden animate-in fade-in duration-100'
+      : variant === 'compact'
+      ? 'absolute top-full mt-1 left-0 w-52 z-50 rounded-lg border border-zinc-800 bg-[#121216] shadow-2xl shadow-black overflow-hidden animate-in fade-in duration-100'
       : 'absolute top-full mt-1.5 left-0 right-0 z-50 rounded-lg border border-zinc-800 bg-[#101014] shadow-2xl shadow-black overflow-hidden animate-in fade-in duration-100'
 
   return (
@@ -160,15 +176,26 @@ export const BranchSelect: React.FC<BranchSelectProps> = ({
         }}
         className={triggerClass}
       >
-        <div className="flex items-center gap-2 min-w-0 pr-2">
-          <RiGitBranchLine className="w-4 h-4 text-zinc-500 shrink-0" />
+        <div className="flex items-center gap-1.5 min-w-0 pr-1.5">
+          <RiGitBranchLine className={`${variant === 'compact' ? 'w-3 h-3' : 'w-4 h-4'} text-zinc-500 shrink-0`} />
           {isLoading ? (
-            <div className="flex items-center gap-2 text-zinc-400">
+            <div className="flex items-center gap-1.5 text-zinc-400">
               <Spinner size="sm" />
               <span className="truncate">Syncing...</span>
             </div>
+          ) : isAllSelected ? (
+            <div className="flex items-center gap-1 truncate">
+              <span className="text-zinc-100 font-medium truncate">
+                All branches
+              </span>
+              {hasSyncedBranches && (
+                <span className="text-[9.5px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400">
+                  {branches.length}
+                </span>
+              )}
+            </div>
           ) : hasSyncedBranches ? (
-            <div className="flex items-center gap-1.5 truncate">
+            <div className="flex items-center gap-1 truncate">
               <span className="text-zinc-100 font-medium truncate max-w-[130px]">
                 {value || defaultBranch}
               </span>
@@ -186,7 +213,7 @@ export const BranchSelect: React.FC<BranchSelectProps> = ({
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
-          {repoUrl.trim() && !isLoading && (
+          {repoUrl.trim() && !isLoading && variant !== 'compact' && (
             <span
               role="button"
               onClick={handleRefresh}
@@ -197,7 +224,7 @@ export const BranchSelect: React.FC<BranchSelectProps> = ({
             </span>
           )}
           <RiArrowDownSLine
-            className={`w-3.5 h-3.5 text-zinc-500 transition-transform duration-150 ${
+            className={`${variant === 'compact' ? 'w-3 h-3' : 'w-3.5 h-3.5'} text-zinc-500 transition-transform duration-150 ${
               isOpen ? 'rotate-180 text-zinc-300' : ''
             }`}
           />
@@ -226,13 +253,38 @@ export const BranchSelect: React.FC<BranchSelectProps> = ({
 
           {/* Synced Branches List */}
           <div className="max-h-56 overflow-y-auto p-1 space-y-0.5 no-scrollbar">
+            {/* All Branches Option */}
+            {showAllOption && !searchFilter.trim() && (
+              <button
+                type="button"
+                onClick={() => {
+                  onChange('__ALL__')
+                  setIsOpen(false)
+                }}
+                className={`w-full px-2.5 py-1.5 rounded-md flex items-center justify-between text-xs font-mono transition-colors text-left cursor-pointer border-b border-zinc-850 mb-0.5 ${
+                  isAllSelected
+                    ? 'bg-zinc-800 text-zinc-100 font-medium'
+                    : 'text-zinc-300 hover:text-white hover:bg-zinc-850'
+                }`}
+              >
+                <div className="flex items-center gap-2 truncate pr-2">
+                  <RiGitBranchLine className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                  <span className="font-medium">Scan all branches</span>
+                  <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">
+                    {branches.length} total
+                  </span>
+                </div>
+                {isAllSelected && <RiCheckLine className="w-3.5 h-3.5 text-zinc-200 shrink-0" />}
+              </button>
+            )}
+
             {filteredBranches.length === 0 ? (
               <div className="py-4 text-center text-xs text-zinc-500 font-mono">
                 No matching branches found
               </div>
             ) : (
               filteredBranches.map(branchName => {
-                const isSelected = (value || defaultBranch) === branchName
+                const isSelected = !isAllSelected && (value || defaultBranch) === branchName
                 const isDefault = branchName === defaultBranch
 
                 return (

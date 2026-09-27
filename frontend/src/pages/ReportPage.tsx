@@ -595,10 +595,13 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'CONFIRMED' | 'FALSE_POSITIVES'>('ALL')
   const [isRevalidating, setIsRevalidating] = useState(false)
   const [selectedFindingForFix, setSelectedFindingForFix] = useState<FindingWithBranch | null>(null)
+  const [batchFindingsForFix, setBatchFindingsForFix] = useState<FindingWithBranch[]>([])
   const [isFixModalOpen, setIsFixModalOpen] = useState(false)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
   
   // Persistent tracking of created PRs across browser reloads
+
+
   const [sentPrs, setSentPrs] = useState<Record<string, { prNumber: number; prUrl: string }>>(() => {
     try {
       const saved = localStorage.getItem(`vulscan_sent_prs_${scanId}`)
@@ -814,16 +817,27 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
     setExportMenuOpen(false)
   }
 
-  // Handle Fix & PR trigger from toolbar
+  // Handle Fix & PR trigger from toolbar: Remediates all filtered/confirmed vulnerabilities
   const handleOpenFixModal = () => {
-    const target = filteredFindings[0] || displayedFindings[0]
-    if (target) {
-      setSelectedFindingForFix(target)
+    const targets = (filteredFindings.length > 0 ? filteredFindings : displayedFindings).filter(
+      f => !f.aiAnalysis?.isFalsePositive
+    )
+    const finalTargets = targets.length > 0 ? targets : (filteredFindings.length > 0 ? filteredFindings : displayedFindings)
+
+    if (finalTargets.length > 0) {
+      if (finalTargets.length === 1) {
+        setSelectedFindingForFix(finalTargets[0])
+        setBatchFindingsForFix([])
+      } else {
+        setSelectedFindingForFix(null)
+        setBatchFindingsForFix(finalTargets)
+      }
       setIsFixModalOpen(true)
     } else {
       info('No security findings available to remediate.', 'Info')
     }
   }
+
 
   if (loading) {
     return (
@@ -1108,17 +1122,28 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
                       ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25'
                       : 'bg-emerald-600 hover:bg-emerald-500 text-white'
                   }`}
-                  title={Object.keys(sentPrs).length > 0 ? 'Pull Request already sent to GitHub' : 'Generate security fix and open Pull Request on GitHub'}
+                  title={
+                    Object.keys(sentPrs).length > 0
+                      ? 'Pull Request already sent to GitHub'
+                      : 'Generate security fixes and open Pull Request on GitHub'
+                  }
                 >
                   {Object.keys(sentPrs).length > 0 ? (
                     <>
                       <RiCheckLine className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>PR Sent</span>
+                      <span>PR Sent ({Object.keys(sentPrs).length})</span>
                     </>
                   ) : (
                     <>
                       <RiGitPullRequestLine className="w-3.5 h-3.5 text-white" />
-                      <span>Fix & PR</span>
+                      <span>
+                        {(filteredFindings.length > 1 || displayedFindings.length > 1)
+                          ? `Fix & PR All (${
+                              filteredFindings.filter(f => !f.aiAnalysis?.isFalsePositive).length ||
+                              displayedFindings.filter(f => !f.aiAnalysis?.isFalsePositive).length
+                            })`
+                          : 'Fix & PR'}
+                      </span>
                     </>
                   )}
                 </button>
@@ -1138,12 +1163,17 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
         onClose={() => {
           setIsFixModalOpen(false)
           setSelectedFindingForFix(null)
+          setBatchFindingsForFix([])
         }}
         scanId={selectedFindingForFix?.sourceScanId || scan?.id || ''}
         finding={selectedFindingForFix}
-        onPrCreated={(findingId, prNumber, prUrl) => {
+        findings={batchFindingsForFix}
+        onPrCreated={(findingIds, prNumber, prUrl) => {
           setSentPrs(prev => {
-            const next = { ...prev, [findingId]: { prNumber, prUrl } }
+            const next = { ...prev }
+            findingIds.forEach(id => {
+              next[id] = { prNumber, prUrl }
+            })
             try {
               localStorage.setItem(`vulscan_sent_prs_${scanId}`, JSON.stringify(next))
             } catch {}
@@ -1154,3 +1184,4 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
     </div>
   )
 }
+

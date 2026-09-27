@@ -4,7 +4,14 @@ import { prisma } from '../config/db.js'
 import { logger } from '../utils/logger.js'
 import { runSecurityScan, getRemoteBranches, type ScanResult } from '../engine/index.js'
 import { checkAiHealth, validateFindingWithAi } from '../services/aiValidator.service.js'
-import { generateAiFix, createGitHubPullRequest, mergeGitHubPullRequest } from '../services/prFix.service.js'
+import {
+  generateAiFix,
+  generateBatchAiFixes,
+  createGitHubPullRequest,
+  createBatchGitHubPullRequest,
+  mergeGitHubPullRequest,
+} from '../services/prFix.service.js'
+
 import { generateSecurityReport } from '../reporting/index.js'
 
 function normalizeRepoUrl(url: string): string {
@@ -698,6 +705,166 @@ export async function createFindingPr(req: Request, res: Response, next: NextFun
     res.status(400).json({ error: error.message || 'Failed to create GitHub Pull Request' })
   }
 }
+
+const generateBatchFixSchema = z.object({
+  findingIds: z.array(z.string()).optional(),
+})
+
+export async function generateBatchFixes(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id
+    const { id } = req.params
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const scan = await prisma.scan.findFirst({
+      where: { id, userId },
+    })
+    if (!scan) {
+      res.status(404).json({ error: 'Scan not found' })
+      return
+    }
+
+    let findings: any[] = []
+    if (scan.findingsJson) {
+      try {
+        findings = JSON.parse(scan.findingsJson)
+      } catch {
+        findings = []
+      }
+    }
+
+    const body = generateBatchFixSchema.parse(req.body || {})
+    let targetFindings = findings
+
+    if (body.findingIds && body.findingIds.length > 0) {
+      const idSet = new Set(body.findingIds)
+      targetFindings = findings.filter(f => idSet.has(f.id))
+    } else {
+      // Default: remediate all confirmed non-false-positive findings
+      targetFindings = findings.filter(f => !f.aiAnalysis?.isFalsePositive)
+      if (targetFindings.length === 0) {
+        targetFindings = findings
+      }
+    }
+
+    if (targetFindings.length === 0) {
+      res.status(400).json({ error: 'No security findings available to remediate.' })
+      return
+    }
+
+    logger.info(`Generating batch AI fixes for ${targetFindings.length} findings in scan ${id}...`)
+    const proposal = await generateBatchAiFixes(scan.repoUrl, scan.branch, targetFindings)
+
+    res.json({
+      message: `Generated fix proposal for ${proposal.totalFindings} vulnerabilities`,
+      proposal,
+    })
+  } catch (error: any) {
+    logger.error(`Error generating batch fixes: ${error.message}`)
+    res.status(500).json({ error: error.message || 'Failed to generate batch fixes with AI' })
+  }
+}
+
+const createBatchPrSchema = z.object({
+  targetBranch: z.string().min(1, 'Target branch required'),
+  branchName: z.string().min(1, 'Branch name required'),
+  patches: z
+    .array(
+      z.object({
+        findingId: z.string().min(1),
+        filePath: z.string().min(1),
+        searchSnippet: z.string().min(1),
+        replacementSnippet: z.string(),
+      })
+    )
+    .min(1, 'At least one file patch is required'),
+  commitMessage: z.string().min(1, 'Commit message required'),
+  prTitle: z.string().min(1, 'PR title required'),
+  prDescription: z.string().min(1, 'PR description required'),
+  githubToken: z.string().optional(),
+})
+
+export async function createBatchPr(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id
+    const { id } = req.params
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const scan = await prisma.scan.findFirst({
+      where: { id, userId },
+    })
+    if (!scan) {
+      res.status(404).json({ error: 'Scan not found' })
+      return
+    }
+
+    const body = createBatchPrSchema.parse(req.body)
+    let githubToken: string | undefined = body.githubToken || (req.headers['x-github-token'] as string)
+    if (!githubToken) {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { githubAccessToken: true },
+      })
+      githubToken = user?.githubAccessToken || undefined
+    }
+
+    logger.info(
+      `Opening batch Pull Request for scan ${id} covering ${body.patches.length} patches on ${scan.repoUrl}...`
+    )
+    const result = await createBatchGitHubPullRequest({
+      repoUrl: scan.repoUrl,
+      targetBranch: body.targetBranch,
+      branchName: body.branchName,
+      patches: body.patches,
+      commitMessage: body.commitMessage,
+      prTitle: body.prTitle,
+      prDescription: body.prDescription,
+      githubToken,
+    })
+
+    if (scan.findingsJson) {
+      try {
+        const parsedFindings = JSON.parse(scan.findingsJson)
+        const fixedSet = new Set(result.fixedFindingIds || body.patches.map(p => p.findingId))
+        const updated = parsedFindings.map((f: any) => {
+          if (fixedSet.has(f.id)) {
+            return {
+              ...f,
+              pr: {
+                prNumber: result.prNumber,
+                prUrl: result.prUrl,
+                branch: result.branch,
+                state: 'open',
+              },
+            }
+          }
+          return f
+        })
+        await prisma.scan.update({
+          where: { id: scan.id },
+          data: { findingsJson: JSON.stringify(updated) },
+        })
+      } catch (e: any) {
+        logger.warn(`Failed to update findingsJson with batch PR details: ${e.message}`)
+      }
+    }
+
+    res.json({
+      message: result.message,
+      result,
+    })
+  } catch (error: any) {
+    logger.error(`Error creating batch pull request: ${error.message}`)
+    res.status(400).json({ error: error.message || 'Failed to create batch GitHub Pull Request' })
+  }
+}
+
 
 const mergePrSchema = z.object({
   pullNumber: z.number().int().positive('Pull number required'),

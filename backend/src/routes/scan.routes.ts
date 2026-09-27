@@ -12,7 +12,9 @@ import {
   getAiStatus,
   revalidateScanWithAi,
   generateFindingFix,
+  generateBatchFixes,
   createFindingPr,
+  createBatchPr,
   mergeFindingPr,
   exportScanReport,
 } from '../controllers/scan.controller.js'
@@ -34,8 +36,11 @@ scanRouter.delete('/', deleteAllScans)
 scanRouter.get('/:id', getScanStatus)
 scanRouter.get('/:id/report', exportScanReport)
 scanRouter.post('/:id/ai-revalidate', revalidateScanWithAi)
+scanRouter.post('/:id/generate-batch-fix', generateBatchFixes)
+scanRouter.post('/:id/create-batch-pr', createBatchPr)
 scanRouter.post('/:id/findings/:findingId/generate-fix', generateFindingFix)
 scanRouter.post('/:id/findings/:findingId/create-pr', createFindingPr)
 scanRouter.post('/:id/merge-pr', mergeFindingPr)
 scanRouter.delete('/:id', deleteScan)
 scanRouter.delete('/:id/findings/:findingId', deleteFinding)
+

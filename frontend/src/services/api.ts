@@ -255,9 +255,27 @@ export const scanApi = {
       { method: 'POST' }
     ),
 
+  generateBatchFixes: (scanId: string, findingIds?: string[]) =>
+    request<{ message: string; proposal: BatchSecurityFixProposal }>(
+      `/api/scan/${scanId}/generate-batch-fix`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ findingIds }),
+      }
+    ),
+
   createPr: (scanId: string, findingId: string, payload: CreatePrPayload) =>
     request<{ message: string; result: CreatePrResult }>(
       `/api/scan/${scanId}/findings/${findingId}/create-pr`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+
+  createBatchPr: (scanId: string, payload: CreateBatchPrPayload) =>
+    request<{ message: string; result: CreatePrResult }>(
+      `/api/scan/${scanId}/create-batch-pr`,
       {
         method: 'POST',
         body: JSON.stringify(payload),
@@ -301,9 +319,61 @@ export const githubApi = {
     }),
 }
 
-export interface SecurityFixProposal {
+export interface FindingFixItem {
+  findingId: string
+  ruleId: string
+  ruleName: string
+  cwe: string
+  severity: string
+  filePath: string
+  line: number
+  sink: string
+  searchSnippet: string
+  replacementSnippet: string
+  explanation: string
+  originalContext: string
+  fixedContext: string
+}
+
+export interface BatchSecurityFixProposal {
+  targetBranch: string
+  suggestedBranch: string
+  prTitle: string
+  prDescription: string
+  commitMessage: string
+  canCreatePr: boolean
+  repoOwner?: string
+  repoName?: string
+  totalFindings: number
+  fixes: FindingFixItem[]
+}
+
+export interface BatchFilePatch {
   findingId: string
   filePath: string
+  searchSnippet: string
+  replacementSnippet: string
+}
+
+export interface CreateBatchPrPayload {
+  githubToken?: string
+  targetBranch: string
+  branchName: string
+  patches: BatchFilePatch[]
+  commitMessage: string
+  prTitle: string
+  prDescription: string
+}
+
+export interface SecurityFixProposal {
+  findingId: string
+  ruleId?: string
+  ruleName?: string
+  cwe?: string
+  severity?: string
+  filePath: string
+  line?: number
+  sink?: string
   targetBranch: string
   suggestedBranch: string
   searchSnippet: string
@@ -318,6 +388,7 @@ export interface SecurityFixProposal {
   repoOwner?: string
   repoName?: string
 }
+
 
 export interface CreatePrPayload {
   githubToken?: string
@@ -338,5 +409,7 @@ export interface CreatePrResult {
   isFork: boolean
   state: string
   message: string
+  fixedFindingIds?: string[]
 }
+
 

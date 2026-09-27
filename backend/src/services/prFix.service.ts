@@ -9,9 +9,62 @@ import type { Finding } from '../engine/types.js'
 
 const execFileAsync = promisify(execFile)
 
-export interface SecurityFixProposal {
+export interface FindingFixItem {
+  findingId: string
+  ruleId: string
+  ruleName: string
+  cwe: string
+  severity: string
+  filePath: string
+  line: number
+  sink: string
+  searchSnippet: string
+  replacementSnippet: string
+  explanation: string
+  originalContext: string
+  fixedContext: string
+}
+
+export interface BatchSecurityFixProposal {
+  targetBranch: string
+  suggestedBranch: string
+  prTitle: string
+  prDescription: string
+  commitMessage: string
+  canCreatePr: boolean
+  repoOwner?: string
+  repoName?: string
+  totalFindings: number
+  fixes: FindingFixItem[]
+}
+
+export interface BatchFilePatch {
   findingId: string
   filePath: string
+  searchSnippet: string
+  replacementSnippet: string
+}
+
+export interface CreateBatchPrParams {
+  repoUrl: string
+  targetBranch: string
+  branchName: string
+  patches: BatchFilePatch[]
+  commitMessage: string
+  prTitle: string
+  prDescription: string
+  githubToken?: string
+}
+
+export interface SecurityFixProposal {
+  findingId: string
+  ruleId?: string
+  ruleName?: string
+  cwe?: string
+  severity?: string
+  filePath: string
+  line?: number
+  sink?: string
   targetBranch: string
   suggestedBranch: string
   searchSnippet: string
@@ -27,6 +80,7 @@ export interface SecurityFixProposal {
   repoName?: string
 }
 
+
 export interface CreatePrResult {
   prUrl: string
   prNumber: number
@@ -34,7 +88,9 @@ export interface CreatePrResult {
   isFork: boolean
   state: string
   message: string
+  fixedFindingIds?: string[]
 }
+
 
 export function parseGitHubUrl(url: string): { owner: string; repo: string } | null {
   try {
@@ -294,7 +350,13 @@ Generate the production-grade bug fix JSON.`
 
   return {
     findingId: finding.id,
+    ruleId: finding.ruleId,
+    ruleName: finding.ruleName,
+    cwe: finding.cwe,
+    severity: finding.severity,
     filePath: finding.filePath,
+    line: finding.line,
+    sink: finding.sink,
     targetBranch: branch,
     suggestedBranch,
     searchSnippet,
@@ -312,6 +374,7 @@ Generate the production-grade bug fix JSON.`
     repoOwner: gh?.owner,
     repoName: gh?.repo,
   }
+
 }
 
 /**
@@ -592,4 +655,487 @@ export async function mergeGitHubPullRequest(params: {
     sha: data.sha,
   }
 }
+
+/**
+ * Generates security fix proposals for multiple findings in a repository
+ */
+export async function generateBatchAiFixes(
+  repoUrl: string,
+  branch: string,
+  findings: Finding[]
+): Promise<BatchSecurityFixProposal> {
+  if (!findings || findings.length === 0) {
+    throw new Error('No findings provided for batch fix generation.')
+  }
+
+  const gh = parseGitHubUrl(repoUrl)
+  const isLocal = repoUrl.startsWith('file://') || repoUrl.startsWith('/')
+  const filesMap = new Map<string, string>()
+  let tmpCloneDir: string | null = null
+
+  try {
+    if (isLocal) {
+      const localBase = repoUrl.replace(/^file:\/\//, '')
+      for (const f of findings) {
+        if (!filesMap.has(f.filePath)) {
+          const fullPath = path.join(localBase, f.filePath)
+          try {
+            const content = await fs.readFile(fullPath, 'utf-8')
+            filesMap.set(f.filePath, content)
+          } catch {
+            filesMap.set(f.filePath, f.snippet || '')
+          }
+        }
+      }
+    } else {
+      tmpCloneDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vulscan-batch-fixgen-'))
+      logger.info(`Fetching repo ${repoUrl} [branch: ${branch}] for batch fix generation of ${findings.length} findings`)
+      await execFileAsync('git', ['clone', '--depth', '1', '-b', branch, repoUrl, tmpCloneDir], {
+        timeout: 45000,
+      })
+
+      for (const f of findings) {
+        if (!filesMap.has(f.filePath)) {
+          const fullPath = path.join(tmpCloneDir, f.filePath)
+          try {
+            const content = await fs.readFile(fullPath, 'utf-8')
+            filesMap.set(f.filePath, content)
+          } catch {
+            filesMap.set(f.filePath, f.snippet || '')
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    logger.warn(`Error reading workspace files for batch fix: ${err.message}. Using snippets.`)
+    for (const f of findings) {
+      if (!filesMap.has(f.filePath)) {
+        filesMap.set(f.filePath, f.snippet || '')
+      }
+    }
+  } finally {
+    if (tmpCloneDir) {
+      try {
+        await fs.rm(tmpCloneDir, { recursive: true, force: true })
+      } catch {}
+    }
+  }
+
+  const fixes: FindingFixItem[] = []
+
+  // Generate fix for each finding
+  for (const finding of findings) {
+    const fileContent = filesMap.get(finding.filePath) || finding.snippet || ''
+    const { context } = extractContextWindow(fileContent, finding.line, 25)
+
+    const systemPrompt = `You are a Principal Security Engineer and Senior Software Architect specializing in code remediation.
+Your task is to fix a confirmed vulnerability (${finding.ruleName}, ${finding.cwe}) in source code.
+
+RULES:
+1. "searchSnippet": Provide the exact contiguous lines from the vulnerable code that need to be replaced. MUST be an exact verbatim substring from the provided code context. Keep it concise (1 to 8 lines around the dangerous sink).
+2. "replacementSnippet": Provide the secure, production-ready replacement code that mitigates the vulnerability using security best practices (e.g. DOMPurify.sanitize, textContent, parameterization, or appropriate validation/escaping). Retain existing indentation style.
+3. "explanation": A crisp 2-3 sentence explanation of how this fix neutralizes the threat.
+
+Respond ONLY with a valid JSON object with keys:
+"searchSnippet", "replacementSnippet", "explanation"`
+
+    const userPrompt = `Target File: ${finding.filePath}
+Flagged Line: ${finding.line}
+Vulnerability: ${finding.ruleName} (${finding.cwe}, Severity: ${finding.severity})
+Dangerous Sink: ${finding.sink}
+
+Code Context:
+\`\`\`
+${context}
+\`\`\`
+
+Generate the production-grade bug fix JSON.`
+
+    let searchSnippet = (finding.snippet || '').trim()
+    let replacementSnippet = ''
+    let explanation = finding.remediation || 'Sanitized and hardened dangerous sink input.'
+
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 45000)
+
+      const res = await fetch(`${config.ollamaBaseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: config.aiModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          stream: false,
+          format: 'json',
+          options: {
+            temperature: 0.1,
+            num_predict: 2048,
+          },
+        }),
+        signal: controller.signal,
+      })
+      clearTimeout(timeoutId)
+
+      if (res.ok) {
+        const data = (await res.json()) as { message?: { content?: string } }
+        const rawContent = data.message?.content || ''
+        const fixJson = parseLlmJson(rawContent)
+        if (fixJson.searchSnippet) searchSnippet = fixJson.searchSnippet.trim()
+        if (fixJson.replacementSnippet) replacementSnippet = fixJson.replacementSnippet.trim()
+        if (fixJson.explanation) explanation = fixJson.explanation
+      }
+    } catch (e: any) {
+      logger.warn(`AI fix generation fallback for finding ${finding.id}: ${e.message}`)
+    }
+
+    if (!fileContent.includes(searchSnippet) && finding.snippet && fileContent.includes(finding.snippet.trim())) {
+      searchSnippet = finding.snippet.trim()
+    }
+
+    const { updatedContent, applied } = applySnippetReplacement(context, searchSnippet, replacementSnippet)
+    const fixedContext = applied ? updatedContent : context
+
+    fixes.push({
+      findingId: finding.id,
+      ruleId: finding.ruleId,
+      ruleName: finding.ruleName,
+      cwe: finding.cwe,
+      severity: finding.severity,
+      filePath: finding.filePath,
+      line: finding.line,
+      sink: finding.sink,
+      searchSnippet,
+      replacementSnippet,
+      explanation,
+      originalContext: context,
+      fixedContext,
+    })
+  }
+
+  const randomSuffix = Math.random().toString(36).substring(2, 7)
+  const uniqueFilesCount = new Set(findings.map(f => f.filePath)).size
+  const suggestedBranch = `vulscan/security-fixes-${findings.length}-vulns-${randomSuffix}`
+
+  const prTitle =
+    findings.length === 1
+      ? `fix(security): resolve ${findings[0].ruleName} in ${path.basename(findings[0].filePath)}`
+      : `fix(security): resolve ${findings.length} vulnerabilities across ${uniqueFilesCount} ${
+          uniqueFilesCount === 1 ? 'file' : 'files'
+        }`
+
+  // Build comprehensive Markdown PR Description
+  const summaryTableRows = fixes
+    .map(
+      f =>
+        `| \`${f.findingId}\` | ${f.ruleName} | **${f.severity}** | \`${f.cwe}\` | \`${f.filePath}:${f.line}\` | \`${f.sink}\` |`
+    )
+    .join('\n')
+
+  const detailsSections = fixes
+    .map(
+      (f, idx) => `#### ${idx + 1}. \`${f.findingId}\` — ${f.ruleName} (\`${f.cwe}\`)
+- **File**: \`${f.filePath}:${f.line}\`
+- **Severity**: **${f.severity}**
+- **Dangerous Sink**: \`${f.sink}\`
+- **Mitigation Applied**: ${f.explanation}
+`
+    )
+    .join('\n')
+
+  const prDescription = `## 🛡️ Automated Security Advisory & Remediation
+
+This Pull Request resolves **${findings.length} security ${
+    findings.length === 1 ? 'vulnerability' : 'vulnerabilities'
+  }** identified by **VulnScan AST Static Application Security Testing (SAST)** on branch \`${branch}\`.
+
+---
+
+### 📋 Resolved Vulnerabilities Summary
+
+| Finding ID | Vulnerability | Severity | CWE | Location | Sink |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+${summaryTableRows}
+
+---
+
+### 🔒 Technical Remediation Breakdown
+
+${detailsSections}
+
+---
+
+### 🧪 Verification & Defensive Validation
+
+1. **Automated Unit Tests**: Ensure existing application tests pass without regressions (\`npm test\` / \`pnpm test\`).
+2. **Defensive Boundaries**: Verify all dynamic database parameters and client-rendered inputs strictly adhere to prepared statement placeholders or sanitization routines.
+
+---
+*Automated security remediation generated by [VulnScan](https://github.com/mohitdevx/vul-scan) AI Engine (${config.aiModel})*`
+
+  const commitMessage =
+    findings.length === 1
+      ? `fix(security): resolve ${findings[0].ruleName} in ${path.basename(findings[0].filePath)}`
+      : `fix(security): resolve ${findings.length} security vulnerabilities across ${uniqueFilesCount} ${
+          uniqueFilesCount === 1 ? 'file' : 'files'
+        }`
+
+  return {
+    targetBranch: branch,
+    suggestedBranch,
+    prTitle,
+    prDescription,
+    commitMessage,
+    canCreatePr: Boolean(gh),
+    repoOwner: gh?.owner,
+    repoName: gh?.repo,
+    totalFindings: findings.length,
+    fixes,
+  }
+}
+
+/**
+ * Applies multiple file patches and opens a unified GitHub Pull Request
+ */
+export async function createBatchGitHubPullRequest(params: CreateBatchPrParams): Promise<CreatePrResult> {
+  const token = params.githubToken || config.githubToken
+  if (!token) {
+    throw new Error(
+      'GitHub Personal Access Token is required to push branches and open Pull Requests. Please provide a GitHub token with "repo" scope.'
+    )
+  }
+
+  const gh = parseGitHubUrl(params.repoUrl)
+  if (!gh) {
+    throw new Error('Only GitHub repositories are supported for automated Pull Requests.')
+  }
+
+  if (!params.patches || params.patches.length === 0) {
+    throw new Error('No file patches provided to create Pull Request.')
+  }
+
+  const { owner, repo } = gh
+  const cleanBranch = params.branchName
+    .replace(/[^a-zA-Z0-9_\-\.\/]/g, '-')
+    .replace(/\.+/g, '.')
+    .replace(/^\/+|\/+$/g, '')
+
+  // 1. Authenticate with GitHub API
+  logger.info(`Authenticating with GitHub API for batch PR creation on ${owner}/${repo}...`)
+  const userRes = await fetch('https://api.github.com/user', {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'VulnScan-Bot/1.0',
+    },
+  })
+
+  if (!userRes.ok) {
+    if (userRes.status === 401) {
+      throw new Error('Invalid GitHub Personal Access Token. Authentication failed.')
+    }
+    const errText = await userRes.text()
+    throw new Error(`GitHub API error (${userRes.status}): ${errText}`)
+  }
+
+  const userData = (await userRes.json()) as { login: string; email?: string }
+  const authUser = userData.login
+
+  // 2. Check repository permissions
+  const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'VulnScan-Bot/1.0',
+    },
+  })
+
+  if (!repoRes.ok) {
+    if (repoRes.status === 404) {
+      throw new Error(`Repository ${owner}/${repo} not found or token lacks access permissions.`)
+    }
+    throw new Error(`Failed to query repository ${owner}/${repo}: ${repoRes.statusText}`)
+  }
+
+  const repoData = (await repoRes.json()) as {
+    permissions?: { push: boolean }
+    default_branch: string
+    fork: boolean
+  }
+
+  const canPushDirectly = Boolean(repoData.permissions?.push)
+  let pushOwner = owner
+  let prHead = cleanBranch
+  let isFork = false
+
+  if (!canPushDirectly && authUser.toLowerCase() !== owner.toLowerCase()) {
+    logger.info(`User ${authUser} lacks push access to ${owner}/${repo}. Initializing fork for batch PR...`)
+    isFork = true
+    pushOwner = authUser
+    prHead = `${authUser}:${cleanBranch}`
+
+    const forkRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/forks`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'VulnScan-Bot/1.0',
+      },
+    })
+
+    if (!forkRes.ok && forkRes.status !== 202) {
+      const forkErr = await forkRes.text()
+      throw new Error(`Failed to fork repository ${owner}/${repo}: ${forkErr}`)
+    }
+
+    await new Promise(r => setTimeout(r, 2500))
+  }
+
+  // 3. Workspace setup: clone, apply all patches, commit, and push
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vulscan-batch-pr-'))
+  const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`
+  const pushUrl = `https://x-access-token:${token}@github.com/${pushOwner}/${repo}.git`
+  const fixedFindingIds: string[] = []
+
+  try {
+    logger.info(`Cloning ${owner}/${repo} [branch: ${params.targetBranch}] to temporary workspace for batch PR`)
+    await execFileAsync('git', ['clone', '--depth', '1', '-b', params.targetBranch, cloneUrl, tmpDir], {
+      timeout: 45000,
+    })
+
+    // Configure committer identity
+    await execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', authUser])
+    await execFileAsync(
+      'git',
+      ['-C', tmpDir, 'config', 'user.email', userData.email || `${authUser}@users.noreply.github.com`]
+    )
+
+    // Checkout new feature branch
+    await execFileAsync('git', ['-C', tmpDir, 'checkout', '-b', cleanBranch])
+
+    // Apply patches grouped by file
+    const patchesByFile = new Map<string, BatchFilePatch[]>()
+    for (const patch of params.patches) {
+      const list = patchesByFile.get(patch.filePath) || []
+      list.push(patch)
+      patchesByFile.set(patch.filePath, list)
+    }
+
+    for (const [relPath, filePatches] of patchesByFile.entries()) {
+      const targetFilePath = path.join(tmpDir, relPath)
+      let currentContent = ''
+      try {
+        currentContent = await fs.readFile(targetFilePath, 'utf-8')
+      } catch (readErr: any) {
+        logger.warn(`Could not read file ${relPath} in repository: ${readErr.message}`)
+        continue
+      }
+
+      let modifiedContent = currentContent
+      for (const p of filePatches) {
+        const { updatedContent, applied } = applySnippetReplacement(
+          modifiedContent,
+          p.searchSnippet,
+          p.replacementSnippet
+        )
+        if (applied) {
+          modifiedContent = updatedContent
+          fixedFindingIds.push(p.findingId)
+        } else {
+          logger.warn(`Patch could not be matched for finding ${p.findingId} in ${relPath}`)
+        }
+      }
+
+      if (modifiedContent !== currentContent) {
+        await fs.writeFile(targetFilePath, modifiedContent, 'utf-8')
+        await execFileAsync('git', ['-C', tmpDir, 'add', relPath])
+      }
+    }
+
+    if (fixedFindingIds.length === 0) {
+      throw new Error('None of the security patches could be applied to the target files. The source code may have changed.')
+    }
+
+    // Commit all changes
+    await execFileAsync('git', ['-C', tmpDir, 'commit', '-m', params.commitMessage])
+    await execFileAsync('git', ['-C', tmpDir, 'remote', 'set-url', 'origin', pushUrl])
+
+    logger.info(`Pushing batch fix branch ${cleanBranch} to origin...`)
+    await execFileAsync('git', ['-C', tmpDir, 'push', '-u', 'origin', cleanBranch, '--force'], {
+      timeout: 30000,
+    })
+  } finally {
+    try {
+      await fs.rm(tmpDir, { recursive: true, force: true })
+    } catch {}
+  }
+
+  // 4. Open Pull Request on upstream repository
+  logger.info(`Opening Batch Pull Request from ${prHead} to ${owner}/${repo}:${params.targetBranch}...`)
+  const prRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'VulnScan-Bot/1.0',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      title: params.prTitle,
+      body: params.prDescription,
+      head: prHead,
+      base: params.targetBranch,
+    }),
+  })
+
+  if (prRes.ok) {
+    const prData = (await prRes.json()) as { html_url: string; number: number; state: string }
+    return {
+      prUrl: prData.html_url,
+      prNumber: prData.number,
+      branch: cleanBranch,
+      isFork,
+      state: prData.state,
+      message: `Batch Pull Request #${prData.number} created successfully covering ${fixedFindingIds.length} vulnerabilities!`,
+      fixedFindingIds,
+    }
+  }
+
+  // If status 422: Check if a PR already exists for this branch
+  if (prRes.status === 422) {
+    const listRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/pulls?head=${encodeURIComponent(
+        prHead
+      )}&base=${encodeURIComponent(params.targetBranch)}&state=open`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'VulnScan-Bot/1.0',
+        },
+      }
+    )
+
+    if (listRes.ok) {
+      const existingPrs = (await listRes.json()) as Array<{ html_url: string; number: number; state: string }>
+      if (existingPrs.length > 0) {
+        return {
+          prUrl: existingPrs[0].html_url,
+          prNumber: existingPrs[0].number,
+          branch: cleanBranch,
+          isFork,
+          state: existingPrs[0].state,
+          message: 'Branch updated and existing batch pull request refreshed.',
+          fixedFindingIds,
+        }
+      }
+    }
+  }
+
+  const errData = await prRes.text()
+  throw new Error(`Failed to create Pull Request: ${errData}`)
+}
+
 

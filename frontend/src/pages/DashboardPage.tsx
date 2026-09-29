@@ -627,6 +627,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                                 variant="compact"
                                 showAllOption={true}
                                 initialDefaultBranch={repo.defaultBranch}
+                                lazy={true}
                               />
                             </div>
                           </td>

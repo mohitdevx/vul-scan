@@ -15,7 +15,6 @@ import {
   RiGitMergeLine,
   RiEditLine,
   RiShieldCheckLine,
-  RiFileList3Line,
 } from '@remixicon/react'
 import {
   scanApi,
@@ -48,23 +47,26 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
 }) => {
   const { success, error, info } = useToast()
 
-  const isBatchMode = !finding && findings.length > 0
-  const activeFindingsList = isBatchMode ? findings : finding ? [finding] : []
+  // Consolidate candidate findings
+  const availableFindings: FindingItem[] = findings.length > 0 ? findings : finding ? [finding] : []
+
+  // Scope: 'ALL' or a specific finding id (e.g. 'CMDI-1')
+  const [selectedScope, setSelectedScope] = useState<string>('ALL')
 
   const [isLoading, setIsLoading] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  // Proposals
+  // Proposals cache and state
   const [singleProposal, setSingleProposal] = useState<SecurityFixProposal | null>(null)
   const [batchProposal, setBatchProposal] = useState<BatchSecurityFixProposal | null>(null)
 
-  // Active selected finding in batch mode
+  // Active selected finding index in batch mode inspection
   const [selectedFixIndex, setSelectedFixIndex] = useState(0)
 
   // Editable patches dictionary: findingId -> replacementSnippet
   const [editablePatches, setEditablePatches] = useState<Record<string, string>>({})
 
-  const [activeTab, setActiveTab] = useState<'diff' | 'edit' | 'context' | 'overview'>('diff')
+  const [activeTab, setActiveTab] = useState<'diff' | 'edit' | 'context'>('diff')
 
   // GitHub Authorization state
   const [ghStatus, setGhStatus] = useState<{
@@ -94,6 +96,18 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
   const [isMerging, setIsMerging] = useState(false)
   const [isMerged, setIsMerged] = useState(false)
   const [copied, setCopied] = useState(false)
+
+  // Initialize scope when modal opens or findings change
+  useEffect(() => {
+    if (!isOpen) return
+    if (finding) {
+      setSelectedScope(finding.id)
+    } else if (availableFindings.length === 1) {
+      setSelectedScope(availableFindings[0].id)
+    } else {
+      setSelectedScope('ALL')
+    }
+  }, [isOpen, finding, availableFindings.length])
 
   // Check persistent GitHub connection status & OAuth config
   useEffect(() => {
@@ -151,9 +165,9 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
     window.open(oauthConfig.url, 'github-oauth', `width=${width},height=${height},left=${left},top=${top}`)
   }
 
-  // Fetch fix proposals (batch or single) when modal opens
+  // Fetch fix proposals whenever scanId or selectedScope changes
   useEffect(() => {
-    if (!isOpen || !scanId || activeFindingsList.length === 0) {
+    if (!isOpen || !scanId || availableFindings.length === 0) {
       setSingleProposal(null)
       setBatchProposal(null)
       setCreatedPr(null)
@@ -163,17 +177,17 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
     let isMounted = true
     setIsLoading(true)
     setCreatedPr(null)
-    setSelectedFixIndex(0)
 
-    if (isBatchMode || activeFindingsList.length > 1) {
-      // Batch mode: remediate all requested findings
-      const targetIds = activeFindingsList.map(f => f.id)
+    if (selectedScope === 'ALL' && availableFindings.length > 1) {
+      // Multiple findings: Batch fix
+      const targetIds = availableFindings.map(f => f.id)
       scanApi
         .generateBatchFixes(scanId, targetIds)
         .then(res => {
           if (!isMounted) return
           setBatchProposal(res.proposal)
           setSingleProposal(null)
+          setSelectedFixIndex(0)
           setBranchName(res.proposal.suggestedBranch)
           setPrTitle(res.proposal.prTitle)
           setPrDescription(res.proposal.prDescription)
@@ -186,17 +200,17 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
         })
         .catch(err => {
           if (!isMounted) return
-          const msg = err instanceof Error ? err.message : 'Failed to generate batch remediation proposal'
+          const msg = err instanceof Error ? err.message : 'Failed to generate remediation proposal'
           error(msg, 'Error')
         })
         .finally(() => {
           if (isMounted) setIsLoading(false)
         })
     } else {
-      // Single finding mode
-      const singleFinding = activeFindingsList[0]
+      // Single finding fix: either explicitly selected or single available finding
+      const targetId = selectedScope === 'ALL' ? availableFindings[0].id : selectedScope
       scanApi
-        .generateFix(scanId, singleFinding.id)
+        .generateFix(scanId, targetId)
         .then(res => {
           if (!isMounted) return
           setSingleProposal(res.proposal)
@@ -204,7 +218,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
           setBranchName(res.proposal.suggestedBranch)
           setPrTitle(res.proposal.prTitle)
           setPrDescription(res.proposal.prDescription)
-          setEditablePatches({ [singleFinding.id]: res.proposal.replacementSnippet })
+          setEditablePatches({ [targetId]: res.proposal.replacementSnippet })
         })
         .catch(err => {
           if (!isMounted) return
@@ -219,14 +233,15 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
     return () => {
       isMounted = false
     }
-  }, [isOpen, scanId, finding, findings.length])
+  }, [isOpen, scanId, selectedScope, availableFindings.length])
 
-  if (!isOpen || activeFindingsList.length === 0) return null
+  if (!isOpen || availableFindings.length === 0) return null
 
-  // Active current fix item
-  const currentFix: FindingFixItem | SecurityFixProposal | null = batchProposal
-    ? batchProposal.fixes[selectedFixIndex] || batchProposal.fixes[0]
-    : singleProposal
+  // Active current fix item for diff view
+  const currentFix: FindingFixItem | SecurityFixProposal | null =
+    selectedScope === 'ALL' && batchProposal
+      ? batchProposal.fixes[selectedFixIndex] || batchProposal.fixes[0]
+      : singleProposal
 
   const handleCopyCode = (text: string) => {
     navigator.clipboard.writeText(text)
@@ -279,13 +294,16 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
     setIsSubmitting(true)
 
     try {
-      if (batchProposal && batchProposal.fixes.length > 0) {
-        // Multi-finding Batch Pull Request
+      if (selectedScope === 'ALL' && batchProposal && batchProposal.fixes.length > 0) {
+        // Multi-finding Pull Request
         const patches = batchProposal.fixes.map(fix => ({
           findingId: fix.findingId,
           filePath: fix.filePath,
           searchSnippet: fix.searchSnippet,
-          replacementSnippet: editablePatches[fix.findingId] !== undefined ? editablePatches[fix.findingId] : fix.replacementSnippet,
+          replacementSnippet:
+            editablePatches[fix.findingId] !== undefined
+              ? editablePatches[fix.findingId]
+              : fix.replacementSnippet,
         }))
 
         const res = await scanApi.createBatchPr(scanId, {
@@ -307,7 +325,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
           fixedCount: fixedFindingIds.length,
         })
         onPrCreated?.(fixedFindingIds, res.result.prNumber, res.result.prUrl)
-        success(`Pull Request #${res.result.prNumber} opened on GitHub covering ${fixedFindingIds.length} vulnerabilities!`, 'PR Opened')
+        success(`Pull Request #${res.result.prNumber} opened on GitHub`, 'PR Opened')
       } else if (singleProposal) {
         // Single finding Pull Request
         const res = await scanApi.createPr(scanId, singleProposal.findingId, {
@@ -316,7 +334,10 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
           branchName: branchName.trim(),
           filePath: singleProposal.filePath,
           searchSnippet: singleProposal.searchSnippet,
-          replacementSnippet: editablePatches[singleProposal.findingId] !== undefined ? editablePatches[singleProposal.findingId] : singleProposal.replacementSnippet,
+          replacementSnippet:
+            editablePatches[singleProposal.findingId] !== undefined
+              ? editablePatches[singleProposal.findingId]
+              : singleProposal.replacementSnippet,
           commitMessage: singleProposal.commitMessage,
           prTitle: prTitle.trim(),
           prDescription: prDescription.trim(),
@@ -355,37 +376,29 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
     }
   }
 
-  const totalFixesCount = batchProposal ? batchProposal.fixes.length : singleProposal ? 1 : 0
+  const totalFixesCount =
+    selectedScope === 'ALL' && batchProposal ? batchProposal.fixes.length : singleProposal ? 1 : 0
   const canCreate = Boolean(batchProposal?.canCreatePr ?? singleProposal?.canCreatePr)
+  const targetBranch = batchProposal?.targetBranch || singleProposal?.targetBranch || 'main'
+  const repoOwner = batchProposal?.repoOwner || singleProposal?.repoOwner
+  const repoName = batchProposal?.repoName || singleProposal?.repoName
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs overflow-y-auto font-sans">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs overflow-y-auto font-sans">
       <div className="relative w-full max-w-4xl bg-surface border border-border rounded-xl shadow-2xl overflow-hidden my-8 flex flex-col max-h-[92vh] text-text-primary">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-surface-muted/30">
+        {/* Modal Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-surface-muted/20">
           <div className="flex items-center gap-3 min-w-0">
             <div className="p-2 rounded-lg bg-surface border border-border-subtle text-emerald-400 shrink-0">
               <RiGitPullRequestLine className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold text-text-primary truncate">
-                  {totalFixesCount > 1
-                    ? `Automated Security Remediation (${totalFixesCount} Vulnerabilities)`
-                    : 'Remediate Vulnerability Finding'}
-                </h3>
-                {totalFixesCount > 1 && (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-                    Comprehensive Batch PR
-                  </span>
-                )}
-              </div>
+              <h3 className="text-sm font-semibold text-text-primary truncate">
+                Create Remediation Pull Request
+              </h3>
               <p className="text-xs text-text-muted font-mono mt-0.5 truncate">
-                {batchProposal
-                  ? `Resolves ${batchProposal.totalFindings} vulnerabilities across target branch '${batchProposal.targetBranch}'`
-                  : finding
-                  ? `${finding.filePath}:${finding.line} • ${finding.ruleName}`
-                  : 'Automated patch generation and Pull Request delivery'}
+                {repoOwner && repoName ? `${repoOwner}/${repoName} • ` : ''}
+                Target branch <span className="text-text-secondary">{targetBranch}</span>
               </p>
             </div>
           </div>
@@ -401,14 +414,57 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
+        <div className="p-6 overflow-y-auto space-y-5 flex-1 text-xs">
+          {/* Scope Selector: Allows choosing to fix all or a specific vulnerability */}
+          {availableFindings.length > 1 && !createdPr && (
+            <div className="space-y-1.5 pb-3 border-b border-border-subtle">
+              <label className="block text-[11px] font-mono text-text-muted">
+                Remediation Target:
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedScope('ALL')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-mono transition-all cursor-pointer border ${
+                    selectedScope === 'ALL'
+                      ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 font-medium'
+                      : 'bg-surface border-border text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                  }`}
+                >
+                  All Vulnerabilities ({availableFindings.length})
+                </button>
+
+                {availableFindings.map(f => {
+                  const isSelected = selectedScope === f.id
+                  return (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setSelectedScope(f.id)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-mono transition-all cursor-pointer border flex items-center gap-1.5 ${
+                        isSelected
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 font-medium'
+                          : 'bg-surface border-border text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                      }`}
+                    >
+                      <span>{f.id}</span>
+                      <span className="text-[10px] text-text-muted font-sans truncate max-w-[120px]">
+                        {f.ruleName}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {isLoading ? (
-            <div className="py-24 flex flex-col items-center justify-center space-y-3">
+            <div className="py-20 flex flex-col items-center justify-center space-y-3">
               <div className="w-6 h-6 border-2 border-border border-t-emerald-400 rounded-full animate-spin" />
               <p className="text-xs font-mono text-text-muted">
-                {activeFindingsList.length > 1
-                  ? `Analyzing and generating security patches for ${activeFindingsList.length} vulnerabilities...`
-                  : 'Generating security patch and verification advisory...'}
+                {selectedScope === 'ALL'
+                  ? `Preparing remediation patches for ${availableFindings.length} vulnerabilities...`
+                  : `Preparing remediation patch for ${selectedScope}...`}
               </p>
             </div>
           ) : !batchProposal && !singleProposal ? (
@@ -421,17 +477,19 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
             </div>
           ) : createdPr ? (
             /* Success State */
-            <div className="py-14 flex flex-col items-center justify-center text-center space-y-4">
+            <div className="py-12 flex flex-col items-center justify-center text-center space-y-4">
               <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
                 <RiCheckLine className="w-6 h-6" />
               </div>
               <div className="space-y-1 max-w-md">
                 <h4 className="text-base font-semibold text-text-primary">
-                  Pull request #{createdPr.prNumber} opened successfully!
+                  Pull Request #{createdPr.prNumber} opened successfully
                 </h4>
                 <p className="text-xs text-text-muted">
                   Branch <span className="font-mono text-text-secondary">{createdPr.branch}</span> has been pushed to GitHub, resolving{' '}
-                  <span className="font-semibold text-emerald-300 font-mono">{createdPr.fixedCount} security {createdPr.fixedCount === 1 ? 'vulnerability' : 'vulnerabilities'}</span>.
+                  <span className="font-semibold text-emerald-300 font-mono">
+                    {createdPr.fixedCount} {createdPr.fixedCount === 1 ? 'vulnerability' : 'vulnerabilities'}
+                  </span>.
                 </p>
               </div>
 
@@ -450,7 +508,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                 {isMerged ? (
                   <span className="inline-flex items-center gap-1.5 px-3.5 py-2 text-emerald-400 font-mono text-xs font-medium">
                     <RiCheckLine className="w-3.5 h-3.5" />
-                    <span>Merged into {batchProposal?.targetBranch || singleProposal?.targetBranch}</span>
+                    <span>Merged into {targetBranch}</span>
                   </span>
                 ) : (
                   <button
@@ -482,29 +540,27 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
             <>
               {/* GitHub Authorization Bar */}
               {isCheckingAuth ? (
-                <div className="p-3 rounded-lg bg-surface-muted/30 border border-border-subtle flex items-center gap-2 text-text-muted text-xs font-mono">
+                <div className="p-3 rounded-lg bg-surface-muted/20 border border-border-subtle flex items-center gap-2 text-text-muted text-xs font-mono">
                   <div className="w-3.5 h-3.5 border-2 border-border border-t-text-primary rounded-full animate-spin" />
                   <span>Checking GitHub authorization...</span>
                 </div>
               ) : ghStatus.connected ? (
-                <div className="flex items-center justify-between p-3.5 rounded-lg bg-surface-muted/30 border border-border">
+                <div className="flex items-center justify-between p-3 rounded-lg bg-surface-muted/20 border border-border">
                   <div className="flex items-center gap-2.5">
                     {ghStatus.avatarUrl ? (
                       <img
                         src={ghStatus.avatarUrl}
                         alt={ghStatus.username || 'GitHub User'}
-                        className="w-6 h-6 rounded-full border border-border"
+                        className="w-5 h-5 rounded-full border border-border"
                       />
                     ) : (
-                      <div className="w-6 h-6 rounded-full bg-surface border border-border flex items-center justify-center text-text-secondary">
-                        <RiGithubFill className="w-3.5 h-3.5" />
+                      <div className="w-5 h-5 rounded-full bg-surface border border-border flex items-center justify-center text-text-secondary">
+                        <RiGithubFill className="w-3 h-3" />
                       </div>
                     )}
-                    <div>
-                      <span className="text-xs font-medium text-text-primary">
-                        Connected as @{ghStatus.username}
-                      </span>
-                    </div>
+                    <span className="text-xs text-text-secondary">
+                      Connected to GitHub as <strong className="font-medium text-text-primary">@{ghStatus.username}</strong>
+                    </span>
                   </div>
 
                   <button
@@ -516,7 +572,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                   </button>
                 </div>
               ) : (
-                <div className="p-4 rounded-lg bg-surface-muted/30 border border-border space-y-3">
+                <div className="p-3.5 rounded-lg bg-surface-muted/20 border border-border space-y-2.5">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-text-primary font-medium">
                       <RiGithubFill className="w-4 h-4 text-text-secondary" />
@@ -529,7 +585,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                     <button
                       type="button"
                       onClick={handleOpenOAuthPopup}
-                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary hover:bg-primary-hover text-primary-text font-medium text-xs transition-colors cursor-pointer"
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-primary-text font-medium text-xs transition-colors cursor-pointer"
                     >
                       <RiGithubFill className="w-4 h-4" />
                       <span>Authorize with GitHub</span>
@@ -543,7 +599,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                             value={inputToken}
                             onChange={e => setInputToken(e.target.value)}
                             placeholder="GitHub Personal Access Token (repo scope)..."
-                            className="w-full pl-3 pr-8 py-2 bg-surface border border-border rounded-lg text-text-primary font-mono text-xs focus:outline-none focus:border-border"
+                            className="w-full pl-3 pr-8 py-1.5 bg-surface border border-border rounded-lg text-text-primary font-mono text-xs focus:outline-none focus:border-border"
                           />
                           <button
                             type="button"
@@ -565,7 +621,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                       </div>
 
                       <div className="flex items-center justify-between text-[11px] font-mono text-text-muted">
-                        <span>Token is securely stored locally in your session.</span>
+                        <span>Stored locally in session memory.</span>
                         <a
                           href="https://github.com/settings/tokens/new?scopes=repo&description=VulScan%20PR%20Bot"
                           target="_blank"
@@ -580,46 +636,31 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                 </div>
               )}
 
-              {/* Multi-Finding Navigation Bar (in Batch Mode) */}
-              {batchProposal && batchProposal.fixes.length > 1 && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-[11px] font-mono text-text-muted">
-                    <span className="flex items-center gap-1.5">
-                      <RiFileList3Line className="w-3.5 h-3.5 text-text-secondary" />
-                      <span>Included Vulnerability Fixes ({batchProposal.fixes.length}):</span>
-                    </span>
-                    <span>Click to inspect & edit individual patch</span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {/* Multi-Finding Navigation (When 'ALL' scope is active) */}
+              {selectedScope === 'ALL' && batchProposal && batchProposal.fixes.length > 1 && (
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-mono text-text-muted">
+                    Included Patches ({batchProposal.fixes.length}):
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                     {batchProposal.fixes.map((fix, idx) => {
                       const isSelected = idx === selectedFixIndex
-                      const sevColor =
-                        fix.severity === 'CRITICAL'
-                          ? 'text-rose-400 border-rose-500/30 bg-rose-500/10'
-                          : fix.severity === 'HIGH'
-                          ? 'text-orange-400 border-orange-500/30 bg-orange-500/10'
-                          : 'text-amber-400 border-amber-500/30 bg-amber-500/10'
-
                       return (
                         <button
                           key={fix.findingId}
                           type="button"
-                          onClick={() => {
-                            setSelectedFixIndex(idx)
-                            if (activeTab === 'overview') setActiveTab('diff')
-                          }}
+                          onClick={() => setSelectedFixIndex(idx)}
                           className={`flex flex-col text-left p-2.5 rounded-lg border transition-all cursor-pointer ${
                             isSelected
-                              ? 'bg-surface border-emerald-500/60 shadow-sm ring-1 ring-emerald-500/30'
+                              ? 'bg-surface border-emerald-500/50 shadow-xs ring-1 ring-emerald-500/20'
                               : 'bg-surface-muted/20 border-border hover:bg-surface-muted/40 hover:border-zinc-700'
                           }`}
                         >
-                          <div className="flex items-center justify-between gap-1 mb-1">
+                          <div className="flex items-center justify-between gap-1 mb-0.5">
                             <span className="font-mono font-semibold text-[11px] text-text-primary">
                               {fix.findingId}
                             </span>
-                            <span className={`px-1.5 py-0.2 text-[9px] font-mono font-semibold rounded border ${sevColor}`}>
+                            <span className="text-[9px] font-mono text-text-muted">
                               {fix.severity}
                             </span>
                           </div>
@@ -638,15 +679,15 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
 
               {/* Remediation Explanation */}
               {currentFix?.explanation && (
-                <div className="bg-surface-muted/20 border border-border-subtle rounded-lg p-3.5 space-y-1">
+                <div className="bg-surface-muted/20 border border-border-subtle rounded-lg p-3 space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="font-mono text-[11px] text-text-muted flex items-center gap-1.5">
                       <RiShieldCheckLine className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>
-                        Remediation Details for {currentFix.findingId} ({currentFix.ruleName})
-                      </span>
+                      <span>{currentFix.findingId} • {currentFix.ruleName}</span>
                     </span>
-                    <span className="font-mono text-[10px] text-text-muted">{currentFix.filePath}:{currentFix.line}</span>
+                    <span className="font-mono text-[10px] text-text-muted">
+                      {currentFix.filePath}:{currentFix.line}
+                    </span>
                   </div>
                   <p className="text-text-secondary leading-relaxed font-sans">{currentFix.explanation}</p>
                 </div>
@@ -723,9 +764,9 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
                       {/* Before / Vulnerable Code */}
                       <div className="bg-surface border border-rose-500/20 rounded-lg overflow-hidden flex flex-col">
-                        <div className="px-3 py-1.5 bg-rose-500/[0.06] border-b border-rose-500/20 text-rose-300 font-mono text-[11px] flex items-center justify-between">
+                        <div className="px-3 py-1.5 bg-rose-500/[0.04] border-b border-rose-500/20 text-rose-300 font-mono text-[11px] flex items-center justify-between">
                           <span>Original Code ({currentFix.filePath}:{currentFix.line})</span>
-                          <span className="text-[10px] text-rose-400 font-semibold">Before</span>
+                          <span className="text-[10px] text-rose-400 font-semibold uppercase tracking-wider">Before</span>
                         </div>
                         <pre className="p-3 text-rose-200/90 font-mono text-xs overflow-x-auto whitespace-pre leading-relaxed flex-1">
                           {currentFix.searchSnippet}
@@ -734,9 +775,9 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
 
                       {/* After / Fixed Code */}
                       <div className="bg-surface border border-emerald-500/20 rounded-lg overflow-hidden flex flex-col">
-                        <div className="px-3 py-1.5 bg-emerald-500/[0.06] border-b border-emerald-500/20 text-emerald-300 font-mono text-[11px] flex items-center justify-between">
+                        <div className="px-3 py-1.5 bg-emerald-500/[0.04] border-b border-emerald-500/20 text-emerald-300 font-mono text-[11px] flex items-center justify-between">
                           <span>Proposed Patch</span>
-                          <span className="text-[10px] text-emerald-400 font-semibold">After</span>
+                          <span className="text-[10px] text-emerald-400 font-semibold uppercase tracking-wider">After</span>
                         </div>
                         <pre className="p-3 text-emerald-200/90 font-mono text-xs overflow-x-auto whitespace-pre leading-relaxed flex-1">
                           {editablePatches[currentFix.findingId] !== undefined
@@ -750,7 +791,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                   {activeTab === 'edit' && (
                     <div className="space-y-2 pt-1">
                       <div className="flex items-center justify-between text-[11px] font-mono text-text-muted">
-                        <span>Editable Patch Replacement for {currentFix.findingId}:</span>
+                        <span>Customize replacement code for {currentFix.findingId}:</span>
                         <button
                           type="button"
                           onClick={() => {
@@ -761,7 +802,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                           }}
                           className="text-text-secondary hover:text-text-primary underline cursor-pointer"
                         >
-                          Reset to default patch
+                          Reset patch
                         </button>
                       </div>
                       <textarea
@@ -779,7 +820,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                           }))
                         }}
                         className="w-full p-3 bg-surface border border-border rounded-lg text-text-primary font-mono text-xs focus:outline-none focus:border-border leading-relaxed"
-                        placeholder="Write or customize replacement code snippet..."
+                        placeholder="Write custom patch replacement..."
                       />
                     </div>
                   )}
@@ -798,27 +839,20 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
               )}
 
               {/* PR Submission Form */}
-              <form onSubmit={handleCreatePr} className="space-y-4 pt-2">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <form onSubmit={handleCreatePr} className="space-y-3.5 pt-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-text-muted font-mono text-[11px] mb-1.5">
-                      Target Repository & Branch
+                    <label className="block text-text-muted font-mono text-[11px] mb-1">
+                      Target Branch
                     </label>
-                    <div className="flex items-center gap-2 px-3 py-2 bg-surface border border-border rounded-lg text-text-secondary font-mono text-xs">
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-surface border border-border rounded-lg text-text-secondary font-mono text-xs">
                       <RiGitBranchLine className="w-3.5 h-3.5 text-text-muted shrink-0" />
-                      <span className="truncate">
-                        {batchProposal?.repoOwner
-                          ? `${batchProposal.repoOwner}/${batchProposal.repoName}`
-                          : singleProposal?.repoOwner
-                          ? `${singleProposal.repoOwner}/${singleProposal.repoName}`
-                          : 'Repository'}{' '}
-                        : {batchProposal?.targetBranch || singleProposal?.targetBranch}
-                      </span>
+                      <span className="truncate">{targetBranch}</span>
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-text-muted font-mono text-[11px] mb-1.5">
+                    <label className="block text-text-muted font-mono text-[11px] mb-1">
                       Fix Branch Name
                     </label>
                     <input
@@ -826,31 +860,31 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                       value={branchName}
                       onChange={e => setBranchName(e.target.value)}
                       required
-                      className="w-full px-3 py-2 bg-surface border border-border rounded-lg text-text-primary font-mono text-xs focus:outline-none focus:border-border"
+                      className="w-full px-3 py-1.5 bg-surface border border-border rounded-lg text-text-primary font-mono text-xs focus:outline-none focus:border-border"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-text-muted font-mono text-[11px] mb-1.5">Pull Request Title</label>
+                  <label className="block text-text-muted font-mono text-[11px] mb-1">Pull Request Title</label>
                   <input
                     type="text"
                     value={prTitle}
                     onChange={e => setPrTitle(e.target.value)}
                     required
-                    className="w-full px-3 py-2 bg-surface border border-border rounded-lg text-text-primary font-sans text-xs focus:outline-none focus:border-border"
+                    className="w-full px-3 py-1.5 bg-surface border border-border rounded-lg text-text-primary font-sans text-xs focus:outline-none focus:border-border"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-text-muted font-mono text-[11px] mb-1.5">
-                    Pull Request Description (Markdown)
+                  <label className="block text-text-muted font-mono text-[11px] mb-1">
+                    Pull Request Description
                   </label>
                   <textarea
-                    rows={4}
+                    rows={3}
                     value={prDescription}
                     onChange={e => setPrDescription(e.target.value)}
-                    className="w-full px-3 py-2 bg-surface border border-border rounded-lg text-text-primary font-mono text-xs focus:outline-none focus:border-border leading-relaxed"
+                    className="w-full px-3 py-1.5 bg-surface border border-border rounded-lg text-text-primary font-mono text-xs focus:outline-none focus:border-border leading-relaxed"
                   />
                 </div>
 
@@ -873,15 +907,15 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
                     {isSubmitting ? (
                       <>
                         <RiLoader4Line className="w-3.5 h-3.5 animate-spin" />
-                        <span>Opening Pull Request...</span>
+                        <span>Creating Pull Request...</span>
                       </>
                     ) : (
                       <>
                         <RiGitPullRequestLine className="w-3.5 h-3.5" />
                         <span>
                           {totalFixesCount > 1
-                            ? `Open Batch Pull Request (${totalFixesCount} Fixes)`
-                            : 'Open Pull Request'}
+                            ? `Create Pull Request (${totalFixesCount} Fixes)`
+                            : 'Create Pull Request'}
                         </span>
                       </>
                     )}

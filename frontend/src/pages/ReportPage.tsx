@@ -922,17 +922,17 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
     setExportMenuOpen(false)
   }
 
-  // Handle Fix & PR trigger from toolbar: Remediates all filtered/confirmed vulnerabilities
-  const handleOpenFixModal = () => {
+  // Handle Fix & PR trigger from toolbar: opens remediation modal with target findings
+  const handleOpenFixModal = (targetFinding?: FindingWithBranch) => {
     const targets = (filteredFindings.length > 0 ? filteredFindings : displayedFindings).filter(
       f => !f.aiAnalysis?.isFalsePositive
     )
     const finalTargets = targets.length > 0 ? targets : (filteredFindings.length > 0 ? filteredFindings : displayedFindings)
 
     if (finalTargets.length > 0) {
-      if (finalTargets.length === 1) {
-        setSelectedFindingForFix(finalTargets[0])
-        setBatchFindingsForFix([])
+      if (targetFinding) {
+        setSelectedFindingForFix(targetFinding)
+        setBatchFindingsForFix(finalTargets)
       } else {
         setSelectedFindingForFix(null)
         setBatchFindingsForFix(finalTargets)
@@ -1221,8 +1221,8 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
               <div className="flex items-center gap-2 pb-2.5">
                 <button
                   type="button"
-                  onClick={handleOpenFixModal}
-                  className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg font-mono text-xs font-semibold shadow-sm transition-all cursor-pointer ${
+                  onClick={() => handleOpenFixModal()}
+                  className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg font-mono text-xs font-semibold shadow-xs transition-all cursor-pointer ${
                     Object.keys(sentPrs).length > 0
                       ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25'
                       : 'bg-emerald-600 hover:bg-emerald-500 text-white'
@@ -1243,7 +1243,7 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
                       <RiGitPullRequestLine className="w-3.5 h-3.5 text-white" />
                       <span>
                         {(filteredFindings.length > 1 || displayedFindings.length > 1)
-                          ? `Fix & PR All (${
+                          ? `Fix & PR (${
                               filteredFindings.filter(f => !f.aiAnalysis?.isFalsePositive).length ||
                               displayedFindings.filter(f => !f.aiAnalysis?.isFalsePositive).length
                             })`

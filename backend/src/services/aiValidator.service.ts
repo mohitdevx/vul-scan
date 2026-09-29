@@ -1,57 +1,9 @@
-import { ChatOllama } from '@langchain/ollama'
 import { config } from '../config/env.js'
 import { logger } from '../utils/logger.js'
+import { sendAiChatCompletion, checkAiHealth } from './aiClient.js'
 import type { Finding, AiTriageResult, AiVerdict } from '../engine/types.js'
 
-let ollamaClient: ChatOllama | null = null
-
-function getOllamaClient(): ChatOllama {
-  if (!ollamaClient) {
-    ollamaClient = new ChatOllama({
-      model: config.aiModel,
-      baseUrl: config.ollamaBaseUrl,
-      temperature: 0.1,
-      format: 'json',
-      numPredict: 350,
-    })
-  }
-  return ollamaClient
-}
-
-/**
- * Check if the Ollama local AI server is accessible
- */
-export async function checkAiHealth(): Promise<{ available: boolean; model: string; error?: string }> {
-  try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 2000)
-
-    const res = await fetch(`${config.ollamaBaseUrl}/api/tags`, {
-      signal: controller.signal,
-    })
-    clearTimeout(timeoutId)
-
-    if (!res.ok) {
-      return { available: false, model: config.aiModel, error: `HTTP ${res.status}` }
-    }
-
-    const data = (await res.json()) as { models?: Array<{ name: string }> }
-    const models = data.models || []
-    const hasModel = models.some(m => m.name === config.aiModel || m.name.startsWith(config.aiModel))
-
-    return {
-      available: true,
-      model: config.aiModel,
-      error: hasModel ? undefined : `Model '${config.aiModel}' not found in local Ollama repository.`,
-    }
-  } catch (err: any) {
-    return {
-      available: false,
-      model: config.aiModel,
-      error: err.message || 'Cannot connect to Ollama server',
-    }
-  }
-}
+export { checkAiHealth }
 
 /**
  * Ground-truth signature registries
@@ -189,37 +141,18 @@ ${contextCode}
 
 Perform a comprehensive security audit of this finding. Output your verdict and full markdown analysis.`
 
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 12000)
-
-    const res = await fetch(`${config.ollamaBaseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: modelName,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        stream: false,
-        options: {
-          temperature: 0.1,
-          num_predict: 350,
-        },
-      }),
-      signal: controller.signal,
+    const rawContent = await sendAiChatCompletion({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.1,
+      maxTokens: 500,
+      timeoutMs: 15000,
     })
-    clearTimeout(timeoutId)
-
-    if (!res.ok) {
-      throw new Error(`Ollama HTTP ${res.status}: ${res.statusText}`)
-    }
-
-    const data = (await res.json()) as { message?: { content?: string } }
-    const rawContent = data.message?.content || ''
 
     if (!rawContent) {
-      throw new Error('Empty response from Ollama model')
+      throw new Error('Empty response from AI model')
     }
 
     // Extract verdict & confidence from metadata tags

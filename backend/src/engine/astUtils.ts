@@ -39,6 +39,23 @@ export const KNOWN_SQL_SANITIZERS = new Set([
   'validator.escape',
 ])
 
+// Known Command Injection sanitizers, quoting, and shell escaping methods
+export const KNOWN_CMDI_SANITIZERS = new Set([
+  'quote',
+  'shellquote',
+  'shellescape',
+  'escapeshell',
+  'escapeshellarg',
+  'escapeshellcmd',
+  'clean',
+  'sanitize',
+  'sanitizecommand',
+  'sanitizearg',
+  'sanitizefilename',
+  'shell-quote.quote',
+  'shell-escape',
+])
+
 
 // HTTP Source indicators (Express, Fastify, Koa, Next.js, Node http)
 export const HTTP_SOURCE_PROPERTIES = new Set([
@@ -802,5 +819,402 @@ export function isSqlTainted(
 
   return { tainted: false }
 }
+
+/**
+ * Checks whether a file is an internal build tool, maintainer script, test file, or config file
+ * (e.g. bin/, scripts/, tools/, build/, tests/, webpack.config.js, etc.)
+ */
+export function isInternalBuildOrDevScript(filePath: string): boolean {
+  if (!filePath) return false
+  const normalized = filePath.replace(/\\/g, '/').toLowerCase()
+  const pathParts = normalized.split('/')
+  const fileName = pathParts[pathParts.length - 1] || ''
+
+  // Build / Dev / Tooling directories
+  if (
+    normalized.includes('/bin/') ||
+    normalized.startsWith('bin/') ||
+    normalized.includes('/scripts/') ||
+    normalized.startsWith('scripts/') ||
+    normalized.includes('/tools/') ||
+    normalized.startsWith('tools/') ||
+    normalized.includes('/build/') ||
+    normalized.startsWith('build/') ||
+    normalized.includes('/tasks/') ||
+    normalized.startsWith('tasks/') ||
+    normalized.includes('/benchmark/') ||
+    normalized.startsWith('benchmark/') ||
+    normalized.includes('/examples/') ||
+    normalized.startsWith('examples/') ||
+    normalized.includes('/docs/') ||
+    normalized.startsWith('docs/') ||
+    normalized.includes('/test/') ||
+    normalized.startsWith('test/') ||
+    normalized.includes('/tests/') ||
+    normalized.startsWith('tests/') ||
+    normalized.includes('/__tests__/') ||
+    normalized.startsWith('__tests__/')
+  ) {
+    return true
+  }
+
+  // Config files and test files
+  if (
+    fileName.endsWith('.config.js') ||
+    fileName.endsWith('.config.ts') ||
+    fileName.endsWith('.config.mjs') ||
+    fileName.endsWith('.config.cjs') ||
+    fileName.endsWith('.test.js') ||
+    fileName.endsWith('.test.ts') ||
+    fileName.endsWith('.spec.js') ||
+    fileName.endsWith('.spec.ts') ||
+    fileName === 'gulpfile.js' ||
+    fileName === 'gruntfile.js' ||
+    fileName === 'webpack.js' ||
+    fileName === 'rollup.js'
+  ) {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Checks if an expression has been sanitized against Command Injection
+ * (e.g. quote(x), shellEscape(x), validator.isAlphanumeric check, escapeShellArg(x))
+ */
+export function isCmdiSanitizedExpression(node: any, scope?: any): boolean {
+  if (!node) return false
+
+  // Direct Call to sanitizer function: quote(cmd), escapeShellArg(arg), etc.
+  if (node.type === 'CallExpression') {
+    const callee = node.callee
+
+    // Simple identifier: quote(x), escapeShell(x), sanitize(x)
+    if (callee.type === 'Identifier') {
+      const name = callee.name.toLowerCase()
+      if (
+        KNOWN_CMDI_SANITIZERS.has(name) ||
+        KNOWN_SANITIZERS.has(name) ||
+        name.includes('escapeshell') ||
+        name.includes('sanitize') ||
+        name.includes('quote') ||
+        name === 'isalphanumeric' ||
+        name === 'isnumeric' ||
+        name === 'isip'
+      ) {
+        return true
+      }
+    }
+
+    // MemberExpression: shellQuote.quote(x), validator.escape(x), shlex.quote(x)
+    if (callee.type === 'MemberExpression') {
+      const propName = (callee.property?.name || callee.property?.value || '').toLowerCase()
+      const objName = (callee.object?.name || '').toLowerCase()
+      const fullName = `${objName}.${propName}`
+
+      if (
+        KNOWN_CMDI_SANITIZERS.has(propName) ||
+        KNOWN_CMDI_SANITIZERS.has(fullName) ||
+        KNOWN_SANITIZERS.has(propName) ||
+        propName.includes('escapeshell') ||
+        propName.includes('quote') ||
+        propName.includes('sanitize') ||
+        propName === 'isalphanumeric' ||
+        propName === 'isnumeric' ||
+        propName === 'isip'
+      ) {
+        return true
+      }
+    }
+  }
+
+  // Identifier holding sanitized result
+  if (node.type === 'Identifier' && scope) {
+    const binding = scope.getBinding ? scope.getBinding(node.name) : null
+    if (binding && binding.path && binding.path.node) {
+      const init = binding.path.node.init
+      if (init && isCmdiSanitizedExpression(init, binding.scope || scope)) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+/**
+ * Evaluates whether an options object passed to spawn/spawnSync/execFile has shell enabled
+ * (e.g. { shell: true } or { shell: '/bin/bash' } or { shell: 'sh' })
+ */
+export function isShellOptionEnabled(optionsNode: any, scope?: any): boolean {
+  if (!optionsNode) return false
+
+  let resolvedNode = optionsNode
+
+  // If options is an Identifier, resolve binding
+  if (optionsNode.type === 'Identifier' && scope) {
+    const binding = scope.getBinding ? scope.getBinding(optionsNode.name) : null
+    if (binding?.path?.node?.init) {
+      resolvedNode = binding.path.node.init
+    }
+  }
+
+  if (resolvedNode && resolvedNode.type === 'ObjectExpression') {
+    for (const prop of resolvedNode.properties || []) {
+      if (prop.type === 'ObjectProperty' || prop.type === 'Property') {
+        const keyName = (prop.key?.name || prop.key?.value || '').toLowerCase()
+        if (keyName === 'shell') {
+          // Check value of shell property
+          if (prop.value?.type === 'BooleanLiteral') {
+            return prop.value.value === true
+          }
+          if (prop.value?.type === 'StringLiteral') {
+            return prop.value.value.trim().length > 0
+          }
+          // If dynamic expression or identifier for shell
+          if (prop.value?.type === 'Identifier') {
+            if (prop.value.name === 'true') return true
+            if (prop.value.name === 'false') return false
+          }
+          return true
+        }
+      }
+    }
+  }
+
+  return false
+}
+
+/**
+ * Checks if an expression passed into a command execution sink contains tainted / dynamic user input.
+ * When isBuildScript is true, dynamic variables without traceable external HTTP sources are treated as safe.
+ */
+export function isCmdiTainted(
+  node: any,
+  scope?: any,
+  isBuildScript = false,
+  depth = 0
+): { tainted: boolean; sourceDesc?: string; isDirectSource?: boolean } {
+  if (!node || depth > 10) {
+    return { tainted: false }
+  }
+
+  // 1. If wrapped in sanitizer or shell-quote, it is safe
+  if (isCmdiSanitizedExpression(node, scope)) {
+    return { tainted: false }
+  }
+
+  // 2. Safe numeric/boolean casts: Number(x), parseInt(x), Boolean(x)
+  if (isSafeNumericOrBooleanCast(node, scope)) {
+    return { tainted: false }
+  }
+
+  // 3. Constant folding: static string literal or concatenated literals
+  const staticVal = evaluateStaticString(node, scope)
+  if (staticVal !== null) {
+    return { tainted: false }
+  }
+
+  // 4. Template literal: inspect dynamic expressions
+  if (node.type === 'TemplateLiteral') {
+    if (node.expressions && node.expressions.length > 0) {
+      for (const expr of node.expressions) {
+        if (isSafeNumericOrBooleanCast(expr, scope) || isCmdiSanitizedExpression(expr, scope)) {
+          continue
+        }
+        const exprCheck = isCmdiTainted(expr, scope, isBuildScript, depth + 1)
+        if (exprCheck.tainted) {
+          return exprCheck
+        }
+      }
+      return { tainted: false }
+    }
+    return { tainted: false }
+  }
+
+  // 5. Binary expression (+ concatenation)
+  if (node.type === 'BinaryExpression' && node.operator === '+') {
+    const leftStatic = evaluateStaticString(node.left, scope)
+    const rightStatic = evaluateStaticString(node.right, scope)
+
+    if (leftStatic !== null && rightStatic !== null) {
+      return { tainted: false }
+    }
+
+    if (leftStatic === null && !isSafeNumericOrBooleanCast(node.left, scope) && !isCmdiSanitizedExpression(node.left, scope)) {
+      const leftCheck = isCmdiTainted(node.left, scope, isBuildScript, depth + 1)
+      if (leftCheck.tainted) return leftCheck
+    }
+
+    if (rightStatic === null && !isSafeNumericOrBooleanCast(node.right, scope) && !isCmdiSanitizedExpression(node.right, scope)) {
+      const rightCheck = isCmdiTainted(node.right, scope, isBuildScript, depth + 1)
+      if (rightCheck.tainted) return rightCheck
+    }
+
+    return { tainted: false }
+  }
+
+  // 6. Logical and conditional expressions
+  if (node.type === 'LogicalExpression') {
+    const left = isCmdiTainted(node.left, scope, isBuildScript, depth + 1)
+    if (left.tainted) return left
+    const right = isCmdiTainted(node.right, scope, isBuildScript, depth + 1)
+    if (right.tainted) return right
+  }
+
+  if (node.type === 'ConditionalExpression') {
+    const c = isCmdiTainted(node.consequent, scope, isBuildScript, depth + 1)
+    if (c.tainted) return c
+    const a = isCmdiTainted(node.alternate, scope, isBuildScript, depth + 1)
+    if (a.tainted) return a
+  }
+
+  // 7. Type Casts / Parenthesized
+  if (node.type === 'TSAsExpression' || node.type === 'TSTypeAssertion' || node.type === 'ParenthesizedExpression') {
+    return isCmdiTainted(node.expression, scope, isBuildScript, depth + 1)
+  }
+
+  // 8. HTTP Source check
+  const httpCheck = isHttpSource(node, scope, depth + 1)
+  if (httpCheck.isSource) {
+    return { tainted: true, isDirectSource: true, sourceDesc: httpCheck.detail }
+  }
+
+  // 9. DOM Source check
+  const domCheck = isDomSource(node, scope, depth + 1)
+  if (domCheck.isSource) {
+    return { tainted: true, isDirectSource: true, sourceDesc: domCheck.detail }
+  }
+
+  // 10. Database / Persistent Source check
+  const dbCheck = isDatabaseSource(node, scope, depth + 1)
+  if (dbCheck.isSource) {
+    return { tainted: true, isDirectSource: true, sourceDesc: dbCheck.detail }
+  }
+
+  // 11. Identifier scope tracing
+  if (node.type === 'Identifier' && scope) {
+    const binding = scope.getBinding ? scope.getBinding(node.name) : null
+    if (binding && binding.path && binding.path.node) {
+      const init = binding.path.node.init
+
+      // Check if init is an allowlist object lookup: const cmd = CMD_MAP[req.query.action]
+      if (init && init.type === 'MemberExpression') {
+        const obj = init.object
+        if (obj && obj.type === 'Identifier') {
+          const objBinding = scope.getBinding ? scope.getBinding(obj.name) : null
+          const objInit = objBinding?.path?.node?.init
+          if (objInit && objInit.type === 'ObjectExpression') {
+            const allPropsStatic = objInit.properties.every((p: any) => {
+              return p.value && (p.value.type === 'StringLiteral' || evaluateStaticString(p.value, scope) !== null)
+            })
+            if (allPropsStatic && objInit.properties.length > 0) {
+              return { tainted: false }
+            }
+          }
+        }
+      }
+
+      if (init) {
+        return isCmdiTainted(init, binding.scope || scope, isBuildScript, depth + 1)
+      }
+      if (binding.kind === 'param') {
+        if (isBuildScript) {
+          // Inside build/maintainer scripts, parameters are internal and not exposed to network input
+          return { tainted: false }
+        }
+        return { tainted: true, sourceDesc: `Parameter '${node.name}'` }
+      }
+    }
+    if (isBuildScript) {
+      // In internal build scripts, unbound variables/options are local CLI options or constants
+      return { tainted: false }
+    }
+    return { tainted: true, sourceDesc: `Dynamic variable '${node.name}'` }
+  }
+
+  // Member expressions like options.since or config.branch in build scripts
+  if (node.type === 'MemberExpression' && isBuildScript) {
+    return { tainted: false }
+  }
+
+  return { tainted: false }
+}
+
+/**
+ * Checks if an identifier or expression in the given AST path was guarded against command injection
+ * by preceding validation checks in the enclosing function or block (e.g. regex tests, allowlist lookups).
+ */
+export function isNodeGuardedAgainstCmdi(node: any, path: any): boolean {
+  if (!node || !path) return false
+
+  const varName = node.type === 'Identifier' ? node.name : null
+  if (!varName) return false
+
+  // Find enclosing function or program body
+  const enclosingFunction = path.getFunctionParent ? path.getFunctionParent() : null
+  const bodyNode = enclosingFunction?.node?.body || path.scope?.block?.body || path.scope?.block
+
+  if (!bodyNode) return false
+
+  const statements = Array.isArray(bodyNode.body) ? bodyNode.body : [bodyNode]
+  const targetLine = path.node?.loc?.start?.line || 999999
+
+  for (const stmt of statements) {
+    if (stmt.loc && stmt.loc.start.line >= targetLine) {
+      break
+    }
+
+    if (stmt.type === 'IfStatement') {
+      const test = stmt.test
+      if (!test) continue
+
+      let foundGuard = false
+
+      const checkExpr = (expr: any) => {
+        if (!expr) return
+        if (expr.type === 'UnaryExpression') {
+          checkExpr(expr.argument)
+          return
+        }
+        if (expr.type === 'LogicalExpression' || expr.type === 'BinaryExpression') {
+          checkExpr(expr.left)
+          checkExpr(expr.right)
+          return
+        }
+        if (expr.type === 'CallExpression') {
+          const callee = expr.callee
+          const args = expr.arguments || []
+          const matchesVar = args.some((a: any) => a.type === 'Identifier' && a.name === varName)
+
+          if (matchesVar) {
+            if (callee.type === 'MemberExpression') {
+              const prop = (callee.property?.name || callee.property?.value || '').toLowerCase()
+              if (['test', 'includes', 'has', 'isalphanumeric', 'isnumeric', 'isip', 'isuuid'].includes(prop)) {
+                foundGuard = true
+              }
+            }
+            if (callee.type === 'Identifier') {
+              const fn = callee.name.toLowerCase()
+              if (['isalphanumeric', 'isnumeric', 'isip', 'isuuid', 'test'].includes(fn)) {
+                foundGuard = true
+              }
+            }
+          }
+        }
+      }
+
+      checkExpr(test)
+      if (foundGuard) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+
 
 

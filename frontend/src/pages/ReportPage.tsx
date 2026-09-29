@@ -54,13 +54,96 @@ function decodeEntities(str: string): string {
     .replace(/&#39;/g, "'")
 }
 
+/**
+ * Repairs unclosed code fences, unclosed inline markdown formatting, and half-closed HTML tags
+ * commonly generated when AI responses are truncated or stream-interrupted.
+ */
+export function repairAndSanitizeMarkdown(rawMarkdown: string): string {
+  if (!rawMarkdown) return ''
+
+  let text = rawMarkdown.replace(/\r\n/g, '\n')
+
+  // 1. Balance triple backtick code fences (```)
+  const fenceMatches = text.match(/^```/gm) || []
+  if (fenceMatches.length % 2 !== 0) {
+    text += '\n```\n'
+  }
+
+  // 2. Line-by-line repairs for inline code and bold/italic when outside code blocks
+  const lines = text.split('\n')
+  let inCodeBlock = false
+  const repairedLines: string[] = []
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    let line = lines[idx]
+    const trimmed = line.trim()
+
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock
+      repairedLines.push(line)
+      continue
+    }
+
+    if (inCodeBlock) {
+      repairedLines.push(line)
+      continue
+    }
+
+    // Auto-close half-open HTML tags (e.g. `<a href="..."` at end of line without `>`)
+    if (/<[a-zA-Z][^>]*$/.test(line) && !line.includes('>')) {
+      line += '>'
+    }
+
+    // Auto-close unclosed <a> / <span> / <code> if opened on this line but not closed
+    const openedA = (line.match(/<a\s+[^>]*>/gi) || []).length
+    const closedA = (line.match(/<\/a>/gi) || []).length
+    if (openedA > closedA) {
+      line += '</a>'.repeat(openedA - closedA)
+    }
+
+    const openedSpan = (line.match(/<span(?:\s+[^>]*)?>/gi) || []).length
+    const closedSpan = (line.match(/<\/span>/gi) || []).length
+    if (openedSpan > closedSpan) {
+      line += '</span>'.repeat(openedSpan - closedSpan)
+    }
+
+    const openedCode = (line.match(/<code(?:\s+[^>]*)?>/gi) || []).length
+    const closedCode = (line.match(/<\/code>/gi) || []).length
+    if (openedCode > closedCode) {
+      line += '</code>'.repeat(openedCode - closedCode)
+    }
+
+    // Balance single backticks (`) if odd count on this line
+    const backtickCount = (line.match(/(?<!\\)`/g) || []).length
+    if (backtickCount % 2 !== 0) {
+      line += '`'
+    }
+
+    // Balance bold asterisks (**) if odd count on this line
+    const boldCount = (line.match(/\*\*/g) || []).length
+    if (boldCount % 2 !== 0) {
+      line += '**'
+    }
+
+    // Balance italic asterisks (*) if odd count on this line (excluding **)
+    const singleAsteriskCount = (line.replace(/\*\*/g, '').match(/\*/g) || []).length
+    if (singleAsteriskCount % 2 !== 0) {
+      line += '*'
+    }
+
+    repairedLines.push(line)
+  }
+
+  return repairedLines.join('\n')
+}
+
 function renderInlineMarkdown(rawText: string): React.ReactNode[] {
   if (!rawText) return []
 
   const text = decodeEntities(rawText)
 
   // Tokenize code, bold, italic, links, HTML anchors, HTML tags, severity badges
-  const tokenRegex = /(<a\s+[^>]*>.*?<\/a>|<a\s+[^>]*\/>|<a\s+[^>]*>|<\/a>|<span\s*[^>]*>.*?<\/span>|<code\s*[^>]*>.*?<\/code>|<kbd\s*[^>]*>.*?<\/kbd>|<mark\s*[^>]*>.*?<\/mark>|<br\s*\/?>|<[^>]+>|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\)|\[(CRITICAL|HIGH|MEDIUM|LOW|INFO)\])/gi
+  const tokenRegex = /(<a\s+[^>]*>.*?<\/a>|<a\s+[^>]*\/>|<a\s+[^>]*>|<\/a>|<span\s*[^>]*>.*?<\/span>|<code\s*[^>]*>.*?<\/code>|<kbd\s*[^>]*>.*?<\/kbd>|<mark\s*[^>]*>.*?<\/mark>|<br\s*\/?>|<[a-zA-Z][^>]*>|<\/[a-zA-Z]+>|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\)|\[(CRITICAL|HIGH|MEDIUM|LOW|INFO)\])/gi
 
   const parts = text.split(tokenRegex)
   const result: React.ReactNode[] = []
@@ -192,12 +275,7 @@ function renderInlineMarkdown(rawText: string): React.ReactNode[] {
       continue
     }
 
-    // 11. Any other stray HTML tag
-    if (/^<[^>]+>$/.test(part)) {
-      continue
-    }
-
-    // 12. Styled severity token [CRITICAL], [HIGH], [MEDIUM], [LOW], [INFO]
+    // 11. Styled severity token [CRITICAL], [HIGH], [MEDIUM], [LOW], [INFO]
     const badgeMatch = part.match(/^\[(CRITICAL|HIGH|MEDIUM|LOW|INFO)\]$/i)
     if (badgeMatch) {
       const sev = badgeMatch[1].toUpperCase()
@@ -224,7 +302,25 @@ function renderInlineMarkdown(rawText: string): React.ReactNode[] {
       continue
     }
 
-    // 13. Plain text
+    // 12. Placeholder angle bracket tokens like `<command>`, `<payload>`, `<T>`, `<user_input>`
+    if (/^<[a-zA-Z0-9_.-]+>$/.test(part)) {
+      result.push(
+        <code
+          key={`bracket-${idx}`}
+          className="font-mono text-[11px] bg-zinc-900/90 text-zinc-300 px-1 py-0.5 rounded border border-zinc-800/80"
+        >
+          {part}
+        </code>
+      )
+      continue
+    }
+
+    // 13. Other raw HTML tags (e.g. <div>, </div>, <p>, etc.) - safe fallback
+    if (/^<[^>]+>$/.test(part)) {
+      continue
+    }
+
+    // 14. Plain text
     result.push(part)
   }
 
@@ -238,7 +334,9 @@ interface CompiledMarkdownReportProps {
 function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
   if (!markdown) return null
 
-  const rawLines = markdown.split('\n')
+  // Pre-process and repair unclosed fences, brackets, or tokens
+  const sanitizedMarkdown = repairAndSanitizeMarkdown(markdown)
+  const rawLines = sanitizedMarkdown.split('\n')
   const elements: React.ReactNode[] = []
 
   let i = 0
@@ -261,7 +359,14 @@ function CompiledMarkdownReport({ markdown }: CompiledMarkdownReportProps) {
       const lang = langMatch && langMatch[1] ? langMatch[1] : 'javascript'
       const codeLines: string[] = []
       i++
-      while (i < rawLines.length && !rawLines[i].trim().startsWith('```')) {
+      while (
+        i < rawLines.length &&
+        !rawLines[i].trim().startsWith('```') &&
+        // Safety guard: prevent unclosed code fence from swallowing section headers or rules
+        !rawLines[i].trim().match(/^#{1,4}\s+/) &&
+        !/^(\*\*\*|---|___)$/.test(rawLines[i].trim()) &&
+        !rawLines[i].trim().startsWith('> [!')
+      ) {
         codeLines.push(rawLines[i])
         i++
       }

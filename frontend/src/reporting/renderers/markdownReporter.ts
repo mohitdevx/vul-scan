@@ -140,7 +140,7 @@ export class MarkdownReporter implements ReportRenderer<string> {
         fMd += `- **Typecast Detection:** *Safe primitive conversion evaluated in scope*\n`
       }
       fMd += `\n**Audit Reasoning:**\n\n`
-      fMd += `${finding.analysis.reasoning}\n\n`
+      fMd += `${this.sanitizeAiMarkdownBlock(finding.analysis.reasoning)}\n\n`
     }
 
     // Impact Section
@@ -157,7 +157,7 @@ export class MarkdownReporter implements ReportRenderer<string> {
 
     // Remediation Section
     fMd += `#### Recommended Remediation\n`
-    fMd += `${finding.remediation.explanation}\n\n`
+    fMd += `${this.sanitizeAiMarkdownBlock(finding.remediation.explanation)}\n\n`
     if (finding.remediation.code) {
       fMd += `**Preferred Hardened Implementation:**\n\n`
       fMd += `\`\`\`${finding.remediation.language || 'javascript'}\n`
@@ -170,6 +170,17 @@ export class MarkdownReporter implements ReportRenderer<string> {
 
     fMd += `---\n\n`
     return fMd
+  }
+
+  private sanitizeAiMarkdownBlock(text?: string): string {
+    if (!text) return ''
+    let cleaned = text.trim()
+    // Balance triple backticks
+    const fenceMatches = cleaned.match(/^```/gm) || []
+    if (fenceMatches.length % 2 !== 0) {
+      cleaned += '\n```'
+    }
+    return cleaned
   }
 
   private renderTaintFlowAscii(flow: TaintFlow): string {

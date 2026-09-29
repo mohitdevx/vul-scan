@@ -154,5 +154,12 @@ export class MasterEngineController {
   }
 }
 
+import { xssEngine } from './xssEngine.js'
+import { sqliEngine } from './sqliEngine.js'
+import { cmdiEngine } from './cmdiEngine.js'
+
 // Global master engine singleton
 export const masterEngine = new MasterEngineController()
+masterEngine.register(xssEngine)
+masterEngine.register(sqliEngine)
+masterEngine.register(cmdiEngine)

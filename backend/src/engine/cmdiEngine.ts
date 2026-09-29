@@ -300,7 +300,7 @@ export const cmdiEngine: SecurityEngine = {
         if (sinkCheck.isDirectShell) {
           // Template literal check: exec(`ping ${req.query.host}`)
           if (firstArg.type === 'TemplateLiteral') {
-            const hasTaintedExpr = firstArg.expressions.some(expr => {
+            const hasTaintedExpr = firstArg.expressions.some((expr: any) => {
               if (
                 isSafeNumericOrBooleanCast(expr, scope) ||
                 isCmdiSanitizedExpression(expr, scope) ||

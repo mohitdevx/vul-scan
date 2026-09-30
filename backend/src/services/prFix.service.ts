@@ -243,11 +243,77 @@ export function generateDeterministicHardenedFix(
 
   // 2. SQL Injection (CWE-89 / SQLi)
   if (cwe.includes('89') || ruleId.includes('SQL') || sink.includes('query') || sink.includes('raw')) {
-    if (lineText.includes('$queryRawUnsafe(')) {
+    if (lineText.includes('$queryRawUnsafe(') || lineText.includes('$executeRawUnsafe(')) {
       return {
         searchSnippet: lineText.trim(),
-        replacementSnippet: lineText.replace('$queryRawUnsafe', '$queryRaw').trim(),
+        replacementSnippet: lineText
+          .replace('$queryRawUnsafe', '$queryRaw')
+          .replace('$executeRawUnsafe', '$executeRaw')
+          .trim(),
         explanation: 'Replaced unsafe raw SQL string concatenation with Prisma parameterized template tag ($queryRaw).',
+      }
+    }
+
+    if (lineText.includes('whereRaw(') || lineText.includes('havingRaw(')) {
+      const replaced = lineText.replace(
+        /(whereRaw|havingRaw)\((['"`].+?['"`])\s*\+\s*([^,\)]+)\)/,
+        '$1($2, [$3])'
+      )
+      return {
+        searchSnippet: lineText.trim(),
+        replacementSnippet: (replaced !== lineText ? replaced : lineText.replace(/(whereRaw|havingRaw)\(([^)]+)\)/, '$1($2, [/* param */])')).trim(),
+        explanation: 'Converted unparameterized raw query clause to parameterized bindings array in Knex.',
+      }
+    }
+
+    // Dynamic SQL string template literals or concatenations (e.g. const sql = `SELECT ... WHERE status = '${status}' ` + orderClause;)
+    if (
+      lineText.includes('`') &&
+      (lineText.includes('${') || lineText.includes('SELECT') || lineText.includes('INSERT') || lineText.includes('UPDATE') || lineText.includes('DELETE') || lineText.includes('FROM') || lineText.includes('WHERE'))
+    ) {
+      let paramIndex = 1
+      const paramList: string[] = []
+      
+      let replaced = lineText.replace(/['"]?\$\{([^}]+)\}['"]?/g, (_match, expr) => {
+        paramList.push(expr.trim())
+        return `$${paramIndex++}`
+      })
+
+      if (replaced.includes('+')) {
+        replaced = replaced.replace(
+          /\+\s*([a-zA-Z0-9_$]+(?:\.[a-zA-Z0-9_$]+)*)\s*(;?)$/,
+          (_m, clauseVar, endSemi) => {
+            return `+ (ALLOWED_CLAUSES[${clauseVar}] || '')${endSemi || ''}`
+          }
+        )
+      }
+
+      if (replaced !== lineText) {
+        return {
+          searchSnippet: lineText.trim(),
+          replacementSnippet: replaced.trim(),
+          explanation: `Converted dynamic SQL interpolation into parameterized query placeholder ($1${paramList.length > 1 ? `..$${paramList.length}` : ''}) and validated dynamic clauses against allowlist map.`,
+        }
+      }
+    }
+
+    // Dynamic SQL string concatenation (e.g. "SELECT ... WHERE id = " + userId)
+    if (
+      (lineText.includes('SELECT') || lineText.includes('INSERT') || lineText.includes('UPDATE') || lineText.includes('DELETE') || lineText.includes('WHERE')) &&
+      lineText.includes('+')
+    ) {
+      let replaced = lineText
+        .replace(/['"]\s*\+\s*([a-zA-Z0-9_$.]+)\s*\+\s*['"]/g, '$1')
+        .replace(/(WHERE\s+[a-zA-Z0-9_.]+\s*=\s*)['"]?\s*\+\s*([a-zA-Z0-9_$.]+)/i, '$1$1')
+
+      if (replaced === lineText) {
+        replaced = lineText.replace(/\+\s*([a-zA-Z0-9_$.]+)/, '/* parameterized placeholder */')
+      }
+
+      return {
+        searchSnippet: lineText.trim(),
+        replacementSnippet: replaced.trim(),
+        explanation: 'Converted dynamic SQL string concatenation into parameterized query placeholder to prevent SQL injection.',
       }
     }
 
@@ -379,6 +445,7 @@ export function applySnippetReplacement(
 function getDomainSpecificFixPrompt(finding: Finding): string {
   const cwe = (finding.cwe || '').toUpperCase()
   const rule = (finding.ruleName || '').toUpperCase()
+  const ruleId = (finding.ruleId || '').toUpperCase()
 
   let domainGuidance = ''
   if (cwe.includes('78') || rule.includes('COMMAND') || rule.includes('CMD')) {
@@ -388,18 +455,26 @@ REMEDIATION REQUIREMENTS:
 1. Replace shell execution (\`exec\`, \`execSync\`, \`shelljs.exec\`, or \`spawn\` with \`shell: true\`) with safe argument-array execution (\`spawn(binary, [args], { shell: false })\` or \`execFile(binary, [args])\`).
 2. Alternatively, if shell execution is required, strictly sanitize dynamic parameters using \`shell-quote.quote([arg])\` or strict allowlist validation regex (\`/^[a-zA-Z0-9._-]+$/\`).
 3. NEVER keep unvalidated template string concatenation inside shell execution sinks.`
-  } else if (cwe.includes('89') || rule.includes('SQL')) {
+  } else if (cwe.includes('89') || ruleId.includes('SQL')) {
     domainGuidance = `
 VULNERABILITY CLASS: SQL Injection (CWE-89)
 REMEDIATION REQUIREMENTS:
-1. Convert raw string concatenations or template literals into parameterized queries using query placeholders ($1, $2 for Postgres, ? for MySQL/SQLite).
-2. For ORMs (Prisma, Knex, TypeORM), replace raw queries with parameterized methods (e.g. \`$queryRaw\` template tags instead of \`$queryRawUnsafe\`).`
-  } else if (cwe.includes('79') || rule.includes('XSS') || rule.includes('CROSS-SITE')) {
+1. NEVER output the original vulnerable code in replacementSnippet. The replacementSnippet MUST modify and secure the code.
+2. For SQL query string variables (e.g., const sql = \`SELECT ... WHERE status = '\${status}' \` + orderClause;):
+   - Replace literal value interpolations '\${param}' or + param with query parameter placeholders ($1, $2, or ?).
+   - For dynamic clauses/columns (e.g. orderClause, sortBy), validate against an allowlist map (e.g. ALLOWED_CLAUSES[orderClause] || '').
+3. For database client calls (db.query, pool.query), pass parameter arrays as the second argument.
+4. For ORMs (Prisma, Knex, TypeORM):
+   - Prisma: Convert $queryRawUnsafe / $executeRawUnsafe to $queryRaw / $executeRaw tagged template literals.
+   - Knex: Convert whereRaw("status = " + status) to whereRaw("status = ?", [status]).
+   - TypeORM: Convert .where("status = " + status) to .where("status = :status", { status }).`
+  } else if (cwe.includes('79') || ruleId.includes('XSS') || ruleId.includes('CROSS-SITE')) {
     domainGuidance = `
 VULNERABILITY CLASS: Cross-Site Scripting (CWE-79)
 REMEDIATION REQUIREMENTS:
-1. Sanitize untrusted dynamic HTML before assigning to DOM sinks using \`DOMPurify.sanitize(input)\`.
-2. Or use safe text properties such as \`textContent\` or \`innerText\` instead of \`innerHTML\` / \`dangerouslySetInnerHTML\`.`
+1. NEVER output unchanged vulnerable code.
+2. Sanitize untrusted dynamic HTML before assigning to DOM sinks using \`DOMPurify.sanitize(input)\`.
+3. Or use safe text properties such as \`textContent\` or \`innerText\` instead of \`innerHTML\` / \`dangerouslySetInnerHTML\`.`
   }
 
   return `You are a Principal Security Architect and Senior Software Engineer specializing in automated code remediation.
@@ -408,7 +483,7 @@ ${domainGuidance}
 
 STRICT JSON OUTPUT RULES:
 1. "searchSnippet": Exact contiguous lines from the vulnerable code that need to be replaced. MUST be a verbatim substring from the code context. Keep it minimal (1-6 lines around line ${finding.line}).
-2. "replacementSnippet": Secure, production-ready, syntax-valid replacement code that fixes the vulnerability. Retain existing indentation style.
+2. "replacementSnippet": Secure, production-ready, syntax-valid replacement code that fixes the vulnerability. MUST BE DIFFERENT from searchSnippet. Retain existing indentation style.
 3. "explanation": Concise 1-2 sentence explanation of how the patch fixes the vulnerability.
 4. "commitMessage": Conventional git commit message (e.g. "fix(security): resolve command injection in ...").
 5. "prTitle": Clean Pull Request title.
@@ -506,30 +581,34 @@ Generate the production-ready hardened fix JSON.`
       const candidateSearch = fixJson.searchSnippet.trim()
       const candidateReplacement = fixJson.replacementSnippet.trim()
 
-      // Verify that candidate patch can be applied to fileContent
-      const { updatedContent, applied } = applySnippetReplacement(
-        fileContent,
-        candidateSearch,
-        candidateReplacement,
-        finding.line
-      )
+      if (candidateSearch !== candidateReplacement && candidateReplacement.length > 0) {
+        // Verify that candidate patch can be applied to fileContent
+        const { updatedContent, applied } = applySnippetReplacement(
+          fileContent,
+          candidateSearch,
+          candidateReplacement,
+          finding.line
+        )
 
-      if (applied) {
-        // Validate that updated file has valid syntax
-        const parsedAst = parseSourceCode(updatedContent, finding.filePath)
-        if (parsedAst) {
-          searchSnippet = candidateSearch
-          replacementSnippet = candidateReplacement
-          if (fixJson.explanation) explanation = fixJson.explanation
-          if (fixJson.commitMessage) commitMessage = fixJson.commitMessage
-          if (fixJson.prTitle) prTitle = fixJson.prTitle
-          if (fixJson.prDescription) prDescription = fixJson.prDescription
-          logger.info(`[FixEngine] Successfully generated and verified AI patch for ${finding.id}`)
+        if (applied) {
+          // Validate that updated file has valid syntax
+          const parsedAst = parseSourceCode(updatedContent, finding.filePath)
+          if (parsedAst) {
+            searchSnippet = candidateSearch
+            replacementSnippet = candidateReplacement
+            if (fixJson.explanation) explanation = fixJson.explanation
+            if (fixJson.commitMessage) commitMessage = fixJson.commitMessage
+            if (fixJson.prTitle) prTitle = fixJson.prTitle
+            if (fixJson.prDescription) prDescription = fixJson.prDescription
+            logger.info(`[FixEngine] Successfully generated and verified AI patch for ${finding.id}`)
+          } else {
+            logger.warn(`[FixEngine] AI patch for ${finding.id} failed AST syntax validation. Using hardened deterministic recipe.`)
+          }
         } else {
-          logger.warn(`[FixEngine] AI patch for ${finding.id} failed AST syntax validation. Using hardened deterministic recipe.`)
+          logger.warn(`[FixEngine] AI searchSnippet did not match in ${finding.filePath}. Using hardened deterministic recipe.`)
         }
       } else {
-        logger.warn(`[FixEngine] AI searchSnippet did not match in ${finding.filePath}. Using hardened deterministic recipe.`)
+        logger.warn(`[FixEngine] AI returned identical search and replacement snippet for ${finding.id}. Using hardened deterministic recipe.`)
       }
     }
   } catch (aiErr: any) {
@@ -679,19 +758,21 @@ Generate the production-ready hardened fix JSON.`
         const candidateSearch = fixJson.searchSnippet.trim()
         const candidateReplacement = fixJson.replacementSnippet.trim()
 
-        const { updatedContent, applied } = applySnippetReplacement(
-          fileContent,
-          candidateSearch,
-          candidateReplacement,
-          finding.line
-        )
+        if (candidateSearch !== candidateReplacement && candidateReplacement.length > 0) {
+          const { updatedContent, applied } = applySnippetReplacement(
+            fileContent,
+            candidateSearch,
+            candidateReplacement,
+            finding.line
+          )
 
-        if (applied) {
-          const parsedAst = parseSourceCode(updatedContent, finding.filePath)
-          if (parsedAst) {
-            searchSnippet = candidateSearch
-            replacementSnippet = candidateReplacement
-            if (fixJson.explanation) explanation = fixJson.explanation
+          if (applied) {
+            const parsedAst = parseSourceCode(updatedContent, finding.filePath)
+            if (parsedAst) {
+              searchSnippet = candidateSearch
+              replacementSnippet = candidateReplacement
+              if (fixJson.explanation) explanation = fixJson.explanation
+            }
           }
         }
       }

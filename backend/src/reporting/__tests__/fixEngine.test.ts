@@ -115,4 +115,28 @@ describe('Automated Security Fix Engine & Remediation Hardening', () => {
     assert.ok(patch2.updatedContent.includes('const a = 10;'))
     assert.ok(patch2.updatedContent.includes('const b = 20;'))
   })
+
+  it('6. Generates hardened fix for SQL query template strings with dynamic clauses', () => {
+    const finding: Finding = {
+      id: 'SQLI-2',
+      ruleId: 'SQLI-RAW-CONCAT',
+      ruleName: 'Raw SQL Query Concatenation',
+      cwe: 'CWE-89',
+      severity: 'CRITICAL',
+      filePath: 'src/sales.js',
+      line: 3,
+      column: 15,
+      message: 'SQL Injection via template string and concatenation',
+      sink: 'db.query(sql)',
+      snippet: "const sql = `SELECT id, amount, status FROM sales WHERE status = '${status}' ` + orderClause;",
+      remediation: 'Use parameterized query placeholders and allowlist dynamic clauses',
+    }
+    const fileContent = `async function getSales(status, orderClause) {\n  const sql = \`SELECT id, amount, status FROM sales WHERE status = '\${status}' \` + orderClause;\n  return db.query(sql);\n}`
+
+    const fix = generateDeterministicHardenedFix(finding, fileContent)
+    assert.notStrictEqual(fix.searchSnippet, fix.replacementSnippet)
+    assert.ok(fix.replacementSnippet.includes('$1'))
+    assert.ok(fix.replacementSnippet.includes('ALLOWED_CLAUSES') || fix.replacementSnippet.includes('orderClause'))
+    assert.ok(!fix.replacementSnippet.includes("'${status}'"))
+  })
 })

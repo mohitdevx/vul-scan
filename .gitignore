@@ -40,3 +40,4 @@ scanner-workspaces/
 *.db
 *.db-journal
 
+left.txt

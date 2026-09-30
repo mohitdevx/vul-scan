@@ -374,10 +374,16 @@ export const cmdiEngine: SecurityEngine = {
 
           const hasShellOption = isShellOptionEnabled(optionsArg, scope)
 
-          // Subcase B1: The executable binary itself is dynamic / tainted
-          if (!isNodeGuardedAgainstCmdi(firstArg, path)) {
+          // Subcase B1: The executable binary itself is dynamic / tainted from an external source
+          if (!isNodeGuardedAgainstCmdi(firstArg, path) && !isBuildScript) {
             const binaryTaint = isCmdiTainted(firstArg, scope, isBuildScript)
-            if (binaryTaint.tainted) {
+            const isDynamicBinary =
+              binaryTaint.tainted &&
+              (binaryTaint.isDirectSource ||
+                firstArg.type === 'TemplateLiteral' ||
+                firstArg.type === 'BinaryExpression')
+
+            if (isDynamicBinary) {
               findings.push({
                 id: `CMDI-${counter++}`,
                 ruleId: 'ast/cmdi-dynamic-executable',

@@ -830,7 +830,7 @@ export function isInternalBuildOrDevScript(filePath: string): boolean {
   const pathParts = normalized.split('/')
   const fileName = pathParts[pathParts.length - 1] || ''
 
-  // Build / Dev / Tooling directories
+  // Build / Dev / Tooling directories and harnesses
   if (
     normalized.includes('/bin/') ||
     normalized.startsWith('bin/') ||
@@ -844,6 +844,18 @@ export function isInternalBuildOrDevScript(filePath: string): boolean {
     normalized.startsWith('tasks/') ||
     normalized.includes('/benchmark/') ||
     normalized.startsWith('benchmark/') ||
+    normalized.includes('/benchmarks/') ||
+    normalized.startsWith('benchmarks/') ||
+    normalized.includes('/harness/') ||
+    normalized.startsWith('harness/') ||
+    normalized.includes('/harness-') ||
+    normalized.includes('harness-') ||
+    normalized.includes('/e2e/') ||
+    normalized.startsWith('e2e/') ||
+    normalized.includes('/fixtures/') ||
+    normalized.startsWith('fixtures/') ||
+    normalized.includes('/mocks/') ||
+    normalized.startsWith('mocks/') ||
     normalized.includes('/examples/') ||
     normalized.startsWith('examples/') ||
     normalized.includes('/docs/') ||

@@ -291,7 +291,32 @@ test('Command Injection (CMDi) Engine Suite', async (t) => {
     assert.equal(findings.length, 0, 'Internal build scripts without untrusted HTTP sources must NOT produce false positives')
   })
 
-  await t.test('20. MasterEngine registers XSS, SQLi, and CMDi engines seamlessly', () => {
+  await t.test('20. ACCURACY VERIFICATION: SDK evaluation harness pattern (Vercel AI SDK codex client) produces ZERO findings', () => {
+    const code = `
+      import { spawn } from 'node:child_process';
+
+      export class CodexAppServerClient {
+        constructor({ executable, args, cwd, env }) {
+          this.child = spawn(executable, args, {
+            cwd,
+            env,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
+        }
+      }
+
+      async function runCommandWithInput({ command, args, input, env }) {
+        const child = spawn(command, args, {
+          stdio: ['pipe', 'ignore', 'pipe'],
+          ...(env == null ? {} : { env }),
+        });
+      }
+    `
+    const findings = runScan(code, 'packages/harness-codex/src/bridge/codex-app-server-client.ts')
+    assert.equal(findings.length, 0, 'SDK internal harness wrappers must NOT produce false positives')
+  })
+
+  await t.test('21. MasterEngine registers XSS, SQLi, and CMDi engines seamlessly', () => {
     const registered = masterEngine.getEngines().map(e => e.id)
     assert.ok(registered.includes('xss'), 'MasterEngine should have xss engine')
     assert.ok(registered.includes('sqli'), 'MasterEngine should have sqli engine')

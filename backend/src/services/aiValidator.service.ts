@@ -55,20 +55,25 @@ export function inspectGroundTruthSafety(code: string): {
   }
 }
 
+const RELEVANT_IMPORT_REGEX = /(child_process|execa|shelljs|cross-spawn|ioredis|redis|pg|mysql|sqlite|prisma|knex|sequelize|mongoose|dompurify|validator|sanitize|escape|fs|http|express|fastify|koa)/i
+
 /**
  * Extracts focused contextual code slice around the finding line
- * Includes top-level import statements to capture module dependencies
+ * Captures relevant security/driver imports while skipping unrelated UI/CSS imports
  */
-export function extractCodeContext(fileContent: string, line: number, windowRadius = 20): string {
+export function extractCodeContext(fileContent: string, line: number, windowRadius = 12): string {
   const allLines = fileContent.split('\n')
   const total = allLines.length
 
-  // Collect top imports (first 30 lines) to capture framework / driver declarations
-  const importLines: string[] = []
+  // Collect only security/driver relevant imports from the top 30 lines
+  const relevantImports: string[] = []
   for (let i = 0; i < Math.min(30, total); i++) {
     const text = allLines[i]
-    if (/^\s*(import|const\s+.*=\s*require\(|let\s+.*=\s*require\(|var\s+.*=\s*require\()/.test(text)) {
-      importLines.push(`L${i + 1}: ${text}`)
+    if (
+      /^\s*(import|const\s+.*=\s*require\(|let\s+.*=\s*require\(|var\s+.*=\s*require\()/.test(text) &&
+      RELEVANT_IMPORT_REGEX.test(text)
+    ) {
+      relevantImports.push(`L${i + 1}: ${text}`)
     }
   }
 
@@ -83,8 +88,8 @@ export function extractCodeContext(fileContent: string, line: number, windowRadi
   }
 
   let result = ''
-  if (importLines.length > 0 && start > 0) {
-    result += `// --- Module Imports & Declarations ---\n${importLines.join('\n')}\n\n// --- Function / Local Context ---\n`
+  if (relevantImports.length > 0 && start > 0) {
+    result += `// --- Relevant Module Imports ---\n${relevantImports.join('\n')}\n\n// --- Function / Local Context ---\n`
   }
   result += contextLines.join('\n')
   return result
@@ -129,32 +134,25 @@ function parseAiResponse(rawContent: string, finding: Finding): {
         const isFp = parsed.verdict === 'FALSE_POSITIVE'
         const conf = typeof parsed.confidence === 'number' ? Math.min(100, Math.max(10, parsed.confidence)) : 90
         const techSummary = parsed.technicalSummary || parsed.sinkAnalysis?.sinkCapabilityExplanation || ''
-        const impact = parsed.securityImpact || (isFp ? 'No security impact (False Positive).' : 'Potential unauthorized data access or execution.')
-        const rem = parsed.remediation || (isFp ? 'No code changes required.' : finding.remediation)
+        const impact = isFp ? 'None' : parsed.securityImpact || 'Potential unauthorized access or execution.'
+        const rem = isFp ? 'None required.' : parsed.remediation || finding.remediation
 
-        const formattedAnalysis = [
-          `### ${isFp ? 'False Positive Assessment' : 'Vulnerability Assessment'}`,
-          `**Verdict**: \`${parsed.verdict}\` (Confidence: ${conf}%)`,
-          '',
-          `#### 1. Technology & Sink Context`,
-          `- **Detected Technology**: ${parsed.sinkAnalysis?.technology || 'Identified via code context'}`,
-          `- **CWE Applicability**: ${parsed.sinkAnalysis?.isSinkApplicableToCwe ? 'Applicable' : 'Inapplicable for this sink'}`,
-          `- **Explanation**: ${parsed.sinkAnalysis?.sinkCapabilityExplanation || 'N/A'}`,
-          '',
-          `#### 2. Dataflow & Taint Evaluation`,
-          `- **Tainted Input Reaches Sink**: ${parsed.dataflowAnalysis?.isTainted ? 'Yes' : 'No'}`,
-          `- **Safe / Parameterized Execution**: ${parsed.dataflowAnalysis?.isParameterizedOrSafe ? 'Yes' : 'No'}`,
-          `- **Details**: ${parsed.dataflowAnalysis?.dataflowExplanation || 'N/A'}`,
-          '',
-          `#### 3. Technical Summary`,
-          techSummary,
-          '',
-          `#### 4. Security Impact`,
-          impact,
-          '',
-          `#### 5. Recommended Action`,
-          rem,
-        ].join('\n')
+        // For False Positives, generate a sleek, minimal 2-line summary to prevent report bloat
+        const formattedAnalysis = isFp
+          ? `### False Positive Assessment\n**Verdict**: \`FALSE_POSITIVE\` (${conf}% confidence)\n\n**Reason**: ${techSummary || 'Pattern collision or benign internal abstraction without an active external attack vector.'}`
+          : [
+              `### Vulnerability Assessment`,
+              `**Verdict**: \`${parsed.verdict}\` (${conf}% confidence)`,
+              '',
+              `#### Technical Breakdown`,
+              techSummary,
+              '',
+              `#### Security Impact`,
+              impact,
+              '',
+              `#### Remediation`,
+              rem,
+            ].join('\n')
 
         return {
           verdict: parsed.verdict,
@@ -207,10 +205,12 @@ function parseAiResponse(rawContent: string, finding: Finding): {
     verdict,
     confidence,
     isFalsePositive,
-    technicalSummary: cleanAnalysis,
-    securityImpact: isFalsePositive ? 'No security impact.' : 'Potential exploitability.',
-    remediation: isFalsePositive ? 'No remediation needed.' : finding.remediation,
-    analysis: cleanAnalysis,
+    technicalSummary: isFalsePositive ? (cleanAnalysis.split('\n')[0] || 'Pattern mismatch.') : cleanAnalysis,
+    securityImpact: isFalsePositive ? 'None' : 'Potential exploitability.',
+    remediation: isFalsePositive ? 'None required.' : finding.remediation,
+    analysis: isFalsePositive
+      ? `### False Positive Assessment\n**Verdict**: \`FALSE_POSITIVE\` (${confidence}% confidence)\n\n**Reason**: ${cleanAnalysis.split('\n')[0] || 'Benign code context.'}`
+      : cleanAnalysis,
   }
 }
 
@@ -225,57 +225,34 @@ export async function validateFindingWithAi(
   const now = new Date().toISOString()
 
   try {
-    const contextCode = extractCodeContext(fileContent, finding.line, 20)
+    const contextCode = extractCodeContext(fileContent, finding.line, 12)
     const groundTruth = inspectGroundTruthSafety(fileContent)
 
     const systemPrompt = `You are a Principal Application Security Verification Engine.
-Your objective is to conduct an impartial, rigorous verification of candidate static analysis (SAST) findings.
+Impartially verify candidate SAST findings. Zero confirmation bias.
 
-### PRINCIPLES OF IMPARTIAL VERIFICATION:
-1. **Zero Confirmation Bias**: Do NOT assume the finding is a vulnerability merely because an AST heuristic flagged it. Static analysis frequently triggers false positives due to pattern collisions.
-2. **Technological & Semantic Grounding**:
-   - Verify if the sink library/driver actually belongs to the vulnerability class.
-   - For example:
-     * Redis (\`ioredis\`, \`redis\`) is a key-value store using the binary-safe RESP protocol. Calling \`redisClient.get(key)\` is NOT SQL and CANNOT cause CWE-89 (SQL Injection).
-     * Mongoose / MongoDB queries are NoSQL (CWE-943), not SQL (CWE-89).
-     * Tagged templates in Prisma (\`prisma.$queryRaw\`...\`\`) or parameterized driver calls (\`client.query(sql, [params])\`) are cryptographically bound and immune to SQLi unless explicitly using unsafe/raw methods.
-     * DOM sinks (\`innerHTML\`) in backend Node.js scripts or build tools that do not render in a web browser DOM are NOT exploitable CWE-79 XSS.
-3. **Dataflow & Parameterization**:
-   - Determine if dynamic untrusted user input is concatenated into an interpreter grammar, or if it is isolated safely via parameter bindings or safe type conversion (e.g. \`parseInt\`, \`Number\`).
-4. **Feasibility of Exploitation**:
-   - Can an attacker manipulate the grammar of an execution engine or extract unauthorized assets?
+EVALUATION RULES:
+1. Technology Check: Verify if sink actually interprets the reported CWE (e.g. Redis is key-value cache, NOT SQL CWE-89. Internal class/harness spawn without shell:true is NOT CMDi CWE-78).
+2. Taint Check: Does untrusted input from external network reach the sink?
+3. Format: Be extremely concise. For FALSE_POSITIVE, use 1 short sentence.
 
-You MUST respond strictly with a valid JSON object matching this schema:
+Output strict JSON:
 {
   "verdict": "CONFIRMED_VULNERABILITY" | "FALSE_POSITIVE",
   "confidence": <integer 0-100>,
-  "sinkAnalysis": {
-    "technology": "<Identified Library/Driver e.g. ioredis, pg, child_process, React>",
-    "isSinkApplicableToCwe": <boolean>,
-    "sinkCapabilityExplanation": "<Detailed explanation of why this sink can or cannot execute the reported CWE class>"
-  },
-  "dataflowAnalysis": {
-    "isTainted": <boolean>,
-    "isParameterizedOrSafe": <boolean>,
-    "dataflowExplanation": "<Dataflow path and parameterization/sanitization evaluation>"
-  },
-  "technicalSummary": "<Technical explanation of why this is a true vulnerability or false positive>",
-  "securityImpact": "<Exploitation blast radius if confirmed, or 'None' if false positive>",
-  "remediation": "<Concrete, production-ready fix if confirmed, or 'None required' if false positive>"
+  "technicalSummary": "<1 concise sentence for False Positive; 2 sentences for Confirmed>",
+  "securityImpact": "<'None' for False Positive; 1 sentence for Confirmed>",
+  "remediation": "<'None required' for False Positive; exact 1-line code fix for Confirmed>"
 }`
 
-    const userPrompt = `Review Candidate Finding:
-- Rule: ${finding.ruleName} (${finding.ruleId})
-- Reported CWE: ${finding.cwe}
-- Candidate Sink: ${finding.sink}
-- Location: ${finding.filePath}:${finding.line}
+    const userPrompt = `Finding: ${finding.ruleName} (${finding.cwe}) at ${finding.filePath}:${finding.line}
+Sink: ${finding.sink}
 
-Surrounding Code Context:
+Code:
 \`\`\`javascript
 ${contextCode}
 \`\`\`
-
-Evaluate this finding step-by-step and output your JSON verification assessment.`
+Return JSON triage assessment.`
 
     const rawContent = await sendAiChatCompletion({
       messages: [
@@ -283,8 +260,8 @@ Evaluate this finding step-by-step and output your JSON verification assessment.
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.1,
-      maxTokens: 1024,
-      timeoutMs: 25000,
+      maxTokens: 256,
+      timeoutMs: 20000,
     })
 
     if (!rawContent) {

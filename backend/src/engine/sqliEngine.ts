@@ -109,10 +109,24 @@ function isDatabaseMemberExpression(callee: any): { isDb: boolean; sinkName: str
   const propName = (callee.property?.name || callee.property?.value || '').toLowerCase()
   const objName = (callee.object?.name || callee.object?.property?.name || '').toLowerCase()
 
-  const isDbObject = DB_OBJECT_NAMES.has(objName) || objName.includes('db') || objName.includes('sql') || objName.includes('pool') || objName.includes('client') || objName.includes('conn')
+  // Explicit non-SQL / cache / network client object patterns to prevent false positives
+  const NON_SQL_OBJECTS = /^(redis|ioredis|cache|memcache|memcached|http|axios|got|request|fetch|s3|bucket|logger|winston|console|socket|emitter|ws|stream|fs)/i
+  if (NON_SQL_OBJECTS.test(objName) || objName.includes('redis') || objName.includes('cache') || objName.includes('axios') || objName.includes('http')) {
+    return { isDb: false, sinkName: '', isOrmRaw: false, isTypeOrmClause: false }
+  }
+
+  const isDbObject = DB_OBJECT_NAMES.has(objName) || objName.includes('db') || objName.includes('sql') || objName.includes('pool') || objName === 'client' || objName === 'conn' || objName === 'connection'
   const isQueryMethod = DB_QUERY_METHODS.has(propName)
   const isOrmRaw = ORM_RAW_METHODS.has(propName)
   const isTypeOrmClause = TYPEORM_CLAUSE_METHODS.has(propName)
+
+  // For generic methods like 'get', 'all', 'run', 'each' require explicit database naming
+  if (propName === 'get' || propName === 'all' || propName === 'run' || propName === 'each') {
+    const isExplicitDb = objName === 'db' || objName === 'database' || objName === 'sqlite' || objName === 'sqlite3' || objName === 'stmt' || objName === 'statement'
+    if (!isExplicitDb) {
+      return { isDb: false, sinkName: '', isOrmRaw: false, isTypeOrmClause: false }
+    }
+  }
 
   // Direct database sink: db.query, pool.execute, prisma.$queryRawUnsafe, etc.
   if (isDbObject && (isQueryMethod || isOrmRaw)) {

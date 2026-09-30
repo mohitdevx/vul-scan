@@ -7,8 +7,7 @@ export { checkAiHealth }
 
 /**
  * Ground-truth signature registries
- * Used to verify if a sanitizer or type cast ACTUALLY exists in the code
- * preventing 1.5B models from hallucinating non-existent sanitizers.
+ * Used to verify if a sanitizer or type cast ACTUALLY exists in the code context.
  */
 const KNOWN_SANITIZER_KEYWORDS = [
   'dompurify',
@@ -58,41 +57,165 @@ export function inspectGroundTruthSafety(code: string): {
 
 /**
  * Extracts focused contextual code slice around the finding line
- * Includes top-level import statements to detect sanitizers (DOMPurify, validator, etc.)
+ * Includes top-level import statements to capture module dependencies
  */
-export function extractCodeContext(fileContent: string, line: number, windowRadius = 18): string {
+export function extractCodeContext(fileContent: string, line: number, windowRadius = 20): string {
   const allLines = fileContent.split('\n')
   const total = allLines.length
 
-  // Collect top imports (first 25 lines) to capture sanitizer declarations
+  // Collect top imports (first 30 lines) to capture framework / driver declarations
   const importLines: string[] = []
-  for (let i = 0; i < Math.min(25, total); i++) {
+  for (let i = 0; i < Math.min(30, total); i++) {
     const text = allLines[i]
-    if (/^\s*(import|const\s+.*=\s*require\(|let\s+.*=\s*require\()/.test(text)) {
+    if (/^\s*(import|const\s+.*=\s*require\(|let\s+.*=\s*require\(|var\s+.*=\s*require\()/.test(text)) {
       importLines.push(`L${i + 1}: ${text}`)
     }
   }
 
-  // Calculate slice around the finding line
+  // Calculate slice around the candidate line
   const start = Math.max(0, line - 1 - windowRadius)
   const end = Math.min(total, line + windowRadius)
   const contextLines: string[] = []
 
   for (let i = start; i < end; i++) {
-    const prefix = i + 1 === line ? `>>> L${i + 1} [FLAGGED SINK]: ` : `    L${i + 1}: `
+    const prefix = i + 1 === line ? `>>> L${i + 1} [CANDIDATE]: ` : `    L${i + 1}: `
     contextLines.push(prefix + allLines[i])
   }
 
   let result = ''
-  if (importLines.length > 0 && start > 25) {
-    result += `// --- File Imports ---\n${importLines.join('\n')}\n\n// --- Function / Local Context ---\n`
+  if (importLines.length > 0 && start > 0) {
+    result += `// --- Module Imports & Declarations ---\n${importLines.join('\n')}\n\n// --- Function / Local Context ---\n`
   }
   result += contextLines.join('\n')
   return result
 }
 
+interface AiStructuredResponse {
+  verdict: 'CONFIRMED_VULNERABILITY' | 'FALSE_POSITIVE'
+  confidence: number
+  sinkAnalysis: {
+    technology: string
+    isSinkApplicableToCwe: boolean
+    sinkCapabilityExplanation: string
+  }
+  dataflowAnalysis: {
+    isTainted: boolean
+    isParameterizedOrSafe: boolean
+    dataflowExplanation: string
+  }
+  technicalSummary: string
+  securityImpact: string
+  remediation: string
+}
+
 /**
- * Validates a single AST finding with Grounded Hybrid Verification (AST Ground Truth + Qwen 2.5 Coder 1.5B)
+ * Parses the raw AI response, supporting strict JSON as well as formatted markdown / fallback tags.
+ */
+function parseAiResponse(rawContent: string, finding: Finding): {
+  verdict: AiVerdict
+  confidence: number
+  isFalsePositive: boolean
+  technicalSummary: string
+  securityImpact: string
+  remediation: string
+  analysis: string
+} {
+  // 1. Try JSON parsing
+  try {
+    const jsonMatch = rawContent.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]) as Partial<AiStructuredResponse>
+      if (parsed.verdict === 'CONFIRMED_VULNERABILITY' || parsed.verdict === 'FALSE_POSITIVE') {
+        const isFp = parsed.verdict === 'FALSE_POSITIVE'
+        const conf = typeof parsed.confidence === 'number' ? Math.min(100, Math.max(10, parsed.confidence)) : 90
+        const techSummary = parsed.technicalSummary || parsed.sinkAnalysis?.sinkCapabilityExplanation || ''
+        const impact = parsed.securityImpact || (isFp ? 'No security impact (False Positive).' : 'Potential unauthorized data access or execution.')
+        const rem = parsed.remediation || (isFp ? 'No code changes required.' : finding.remediation)
+
+        const formattedAnalysis = [
+          `### ${isFp ? 'False Positive Assessment' : 'Vulnerability Assessment'}`,
+          `**Verdict**: \`${parsed.verdict}\` (Confidence: ${conf}%)`,
+          '',
+          `#### 1. Technology & Sink Context`,
+          `- **Detected Technology**: ${parsed.sinkAnalysis?.technology || 'Identified via code context'}`,
+          `- **CWE Applicability**: ${parsed.sinkAnalysis?.isSinkApplicableToCwe ? 'Applicable' : 'Inapplicable for this sink'}`,
+          `- **Explanation**: ${parsed.sinkAnalysis?.sinkCapabilityExplanation || 'N/A'}`,
+          '',
+          `#### 2. Dataflow & Taint Evaluation`,
+          `- **Tainted Input Reaches Sink**: ${parsed.dataflowAnalysis?.isTainted ? 'Yes' : 'No'}`,
+          `- **Safe / Parameterized Execution**: ${parsed.dataflowAnalysis?.isParameterizedOrSafe ? 'Yes' : 'No'}`,
+          `- **Details**: ${parsed.dataflowAnalysis?.dataflowExplanation || 'N/A'}`,
+          '',
+          `#### 3. Technical Summary`,
+          techSummary,
+          '',
+          `#### 4. Security Impact`,
+          impact,
+          '',
+          `#### 5. Recommended Action`,
+          rem,
+        ].join('\n')
+
+        return {
+          verdict: parsed.verdict,
+          confidence: conf,
+          isFalsePositive: isFp,
+          technicalSummary: techSummary,
+          securityImpact: impact,
+          remediation: rem,
+          analysis: formattedAnalysis,
+        }
+      }
+    }
+  } catch {
+    // Continue to fallback parsing
+  }
+
+  // 2. Fallback: Parse markdown tags or explicit verdict keywords
+  const verdictMatch = rawContent.match(/\[VERDICT\]:\s*(CONFIRMED_VULNERABILITY|FALSE_POSITIVE)/i)
+  const confMatch = rawContent.match(/\[CONFIDENCE\]:\s*(\d+)/i)
+
+  let isFalsePositive = false
+  let verdict: AiVerdict = 'CONFIRMED_VULNERABILITY'
+
+  if (verdictMatch) {
+    if (verdictMatch[1].toUpperCase() === 'FALSE_POSITIVE') {
+      isFalsePositive = true
+      verdict = 'FALSE_POSITIVE'
+    }
+  } else {
+    const lower = rawContent.toLowerCase()
+    const fpKeywords = ['false positive', 'not a vulnerability', 'not vulnerable', 'inapplicable', 'safe from']
+    const cvKeywords = ['confirmed vulnerability', 'active vulnerability', 'exploitable', 'critical vulnerability']
+
+    const fpCount = fpKeywords.filter(kw => lower.includes(kw)).length
+    const cvCount = cvKeywords.filter(kw => lower.includes(kw)).length
+
+    if (fpCount > cvCount) {
+      isFalsePositive = true
+      verdict = 'FALSE_POSITIVE'
+    }
+  }
+
+  const confidence = confMatch ? Math.min(100, Math.max(50, parseInt(confMatch[1], 10))) : 85
+  const cleanAnalysis = rawContent
+    .replace(/\[VERDICT\]:[^\n]*\n?/gi, '')
+    .replace(/\[CONFIDENCE\]:[^\n]*\n?/gi, '')
+    .trim()
+
+  return {
+    verdict,
+    confidence,
+    isFalsePositive,
+    technicalSummary: cleanAnalysis,
+    securityImpact: isFalsePositive ? 'No security impact.' : 'Potential exploitability.',
+    remediation: isFalsePositive ? 'No remediation needed.' : finding.remediation,
+    analysis: cleanAnalysis,
+  }
+}
+
+/**
+ * Validates a single candidate finding using an Impartial Multi-Stage AI Logical Engine.
  */
 export async function validateFindingWithAi(
   finding: Finding,
@@ -102,44 +225,57 @@ export async function validateFindingWithAi(
   const now = new Date().toISOString()
 
   try {
-    const client = getOllamaClient()
-    const contextCode = extractCodeContext(fileContent, finding.line, 18)
+    const contextCode = extractCodeContext(fileContent, finding.line, 20)
     const groundTruth = inspectGroundTruthSafety(fileContent)
 
-    const hasSanitizerOrCast = groundTruth.hasSanitizer || groundTruth.hasNumberCast
-    const sanitizerContext = hasSanitizerOrCast
-      ? `A potential sanitizer, encoder, or type conversion mechanism was detected in this file (${
-          groundTruth.sanitizerMatched || groundTruth.numberCastMatched
-        }). Verify if user input reaching sink '${finding.sink}' actually passes through it.`
-      : `Static analysis confirmed NO sanitizer (such as DOMPurify, validator, or escapeHtml) and NO safe typecasting protects this sink.`
+    const systemPrompt = `You are a Principal Application Security Verification Engine.
+Your objective is to conduct an impartial, rigorous verification of candidate static analysis (SAST) findings.
 
-    const systemPrompt = `You are a Principal Application Security Auditor conducting a source code security assessment.
+### PRINCIPLES OF IMPARTIAL VERIFICATION:
+1. **Zero Confirmation Bias**: Do NOT assume the finding is a vulnerability merely because an AST heuristic flagged it. Static analysis frequently triggers false positives due to pattern collisions.
+2. **Technological & Semantic Grounding**:
+   - Verify if the sink library/driver actually belongs to the vulnerability class.
+   - For example:
+     * Redis (\`ioredis\`, \`redis\`) is a key-value store using the binary-safe RESP protocol. Calling \`redisClient.get(key)\` is NOT SQL and CANNOT cause CWE-89 (SQL Injection).
+     * Mongoose / MongoDB queries are NoSQL (CWE-943), not SQL (CWE-89).
+     * Tagged templates in Prisma (\`prisma.$queryRaw\`...\`\`) or parameterized driver calls (\`client.query(sql, [params])\`) are cryptographically bound and immune to SQLi unless explicitly using unsafe/raw methods.
+     * DOM sinks (\`innerHTML\`) in backend Node.js scripts or build tools that do not render in a web browser DOM are NOT exploitable CWE-79 XSS.
+3. **Dataflow & Parameterization**:
+   - Determine if dynamic untrusted user input is concatenated into an interpreter grammar, or if it is isolated safely via parameter bindings or safe type conversion (e.g. \`parseInt\`, \`Number\`).
+4. **Feasibility of Exploitation**:
+   - Can an attacker manipulate the grammar of an execution engine or extract unauthorized assets?
 
-Analyze the flagged AST finding and the surrounding code context.
-- Flagged Sink: '${finding.sink}'
-- Rule: ${finding.ruleName} (${finding.ruleId}, ${finding.cwe})
-- Context: ${sanitizerContext}
+You MUST respond strictly with a valid JSON object matching this schema:
+{
+  "verdict": "CONFIRMED_VULNERABILITY" | "FALSE_POSITIVE",
+  "confidence": <integer 0-100>,
+  "sinkAnalysis": {
+    "technology": "<Identified Library/Driver e.g. ioredis, pg, child_process, React>",
+    "isSinkApplicableToCwe": <boolean>,
+    "sinkCapabilityExplanation": "<Detailed explanation of why this sink can or cannot execute the reported CWE class>"
+  },
+  "dataflowAnalysis": {
+    "isTainted": <boolean>,
+    "isParameterizedOrSafe": <boolean>,
+    "dataflowExplanation": "<Dataflow path and parameterization/sanitization evaluation>"
+  },
+  "technicalSummary": "<Technical explanation of why this is a true vulnerability or false positive>",
+  "securityImpact": "<Exploitation blast radius if confirmed, or 'None' if false positive>",
+  "remediation": "<Concrete, production-ready fix if confirmed, or 'None required' if false positive>"
+}`
 
-At the very top of your response, output these two metadata lines:
-[VERDICT]: CONFIRMED_VULNERABILITY or FALSE_POSITIVE
-[CONFIDENCE]: <integer 0-100>
-
-Then, provide a comprehensive, elite security advisory in Markdown.
-Naturally include:
-1. In-depth technical breakdown of the data flow from source to the dangerous sink '${finding.sink}', explaining root cause in business logic and why it is an active vulnerability or false positive.
-2. Real-world security impact & exploitation scenario (e.g. session token theft, DOM hijacking, blast radius).
-3. A clean "Suggested Fix" with production-ready, syntax-highlighted code blocks (\`\`\`javascript or \`\`\`typescript) demonstrating the hardened implementation using best practices (such as DOMPurify.sanitize, textContent, or parameterized queries).`
-
-    const userPrompt = `Finding: ${finding.ruleName} (${finding.ruleId})
-File: ${finding.filePath}:${finding.line}
-Flagged Sink: ${finding.sink}
+    const userPrompt = `Review Candidate Finding:
+- Rule: ${finding.ruleName} (${finding.ruleId})
+- Reported CWE: ${finding.cwe}
+- Candidate Sink: ${finding.sink}
+- Location: ${finding.filePath}:${finding.line}
 
 Surrounding Code Context:
 \`\`\`javascript
 ${contextCode}
 \`\`\`
 
-Perform a comprehensive security audit of this finding. Output your verdict and full markdown analysis.`
+Evaluate this finding step-by-step and output your JSON verification assessment.`
 
     const rawContent = await sendAiChatCompletion({
       messages: [
@@ -147,66 +283,38 @@ Perform a comprehensive security audit of this finding. Output your verdict and 
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.1,
-      maxTokens: 500,
-      timeoutMs: 15000,
+      maxTokens: 1024,
+      timeoutMs: 25000,
     })
 
     if (!rawContent) {
-      throw new Error('Empty response from AI model')
+      throw new Error('Empty response from AI verification engine')
     }
 
-    // Extract verdict & confidence from metadata tags
-    const verdictMatch = rawContent.match(/\[VERDICT\]:\s*(CONFIRMED_VULNERABILITY|FALSE_POSITIVE)/i)
-    const confMatch = rawContent.match(/\[CONFIDENCE\]:\s*(\d+)/i)
-
-    let isFalsePositive = false
-    let verdict: AiVerdict = 'CONFIRMED_VULNERABILITY'
-
-    if (verdictMatch) {
-      const v = verdictMatch[1].toUpperCase()
-      if (v === 'FALSE_POSITIVE') {
-        isFalsePositive = true
-        verdict = 'FALSE_POSITIVE'
-      }
-    } else if (rawContent.toLowerCase().includes('false positive') && !rawContent.toLowerCase().includes('not a false positive')) {
-      isFalsePositive = true
-      verdict = 'FALSE_POSITIVE'
-    }
-
-    // Guardrail: if ground truth confirmed NO sanitizer exists, don't allow false positive unless explicitly static
-    if (!hasSanitizerOrCast && isFalsePositive && !rawContent.toLowerCase().includes('static') && !rawContent.toLowerCase().includes('hardcoded')) {
-      isFalsePositive = false
-      verdict = 'CONFIRMED_VULNERABILITY'
-    }
-
-    const confidence = confMatch ? Math.min(100, Math.max(50, parseInt(confMatch[1], 10))) : 95
-
-    // Clean metadata tags from the markdown content
-    const cleanAnalysis = rawContent
-      .replace(/\[VERDICT\]:[^\n]*\n?/i, '')
-      .replace(/\[CONFIDENCE\]:[^\n]*\n?/i, '')
-      .trim()
+    const parsedResult = parseAiResponse(rawContent, finding)
 
     return {
-      verdict,
-      confidence,
-      isFalsePositive,
-      analysis: cleanAnalysis,
-      reason: cleanAnalysis,
-      remediation: 'Refer to the detailed security advisory above for the suggested fix and code.',
+      verdict: parsedResult.verdict,
+      confidence: parsedResult.confidence,
+      isFalsePositive: parsedResult.isFalsePositive,
+      analysis: parsedResult.analysis,
+      reason: parsedResult.technicalSummary,
+      dataFlow: parsedResult.analysis,
+      securityImpact: parsedResult.securityImpact,
+      remediation: parsedResult.remediation,
       model: modelName,
       sanitizerDetected: groundTruth.hasSanitizer,
       safeCastDetected: groundTruth.hasNumberCast,
       evaluatedAt: now,
     }
   } catch (err: any) {
-    logger.warn(`[AiValidator] Error during AI verification for ${finding.id}: ${err.message}`)
+    logger.warn(`[AiValidator] AI verification encountered an error for ${finding.id}: ${err.message}`)
     return {
       verdict: 'CONFIRMED_VULNERABILITY',
       confidence: 70,
       isFalsePositive: false,
-      analysis: `### Security Finding\nStatic analysis identified dynamic taint flow reaching dangerous sink \`${finding.sink}\` at \`${finding.filePath}:${finding.line}\` without contextual sanitization or safe type conversion.`,
-      reason: `Static analysis identified dynamic taint flow reaching dangerous sink '${finding.sink}' at ${finding.filePath}:${finding.line}. Flagged for security review.`,
+      analysis: `### Candidate Finding\nStatic analysis flagged dynamic pattern at \`${finding.filePath}:${finding.line}\` for sink \`${finding.sink}\`. Manual security verification recommended.`,
+      reason: `Static analysis flagged sink '${finding.sink}' at ${finding.filePath}:${finding.line}. Flagged for review.`,
       remediation: finding.remediation,
       model: modelName,
       evaluatedAt: now,
@@ -215,25 +323,24 @@ Perform a comprehensive security audit of this finding. Output your verdict and 
 }
 
 /**
- * Validates findings with controlled concurrency and fast-path initial triage
+ * Validates findings in batch with controlled concurrency and priority ordering
  */
 export async function validateFindingsBatch(
   findings: Finding[],
   filesMap: Map<string, string>,
-  concurrency = 1
+  concurrency = 2
 ): Promise<Finding[]> {
   if (!config.aiValidationEnabled || findings.length === 0) {
     return findings
   }
 
-  // Check health first to avoid waiting through timeouts if Ollama is down
+  // Check health first to avoid waiting through timeouts if AI endpoint is unreachable
   const health = await checkAiHealth()
   if (!health.available) {
-    logger.warn(`[AiValidator] Ollama server is not accessible at ${config.ollamaBaseUrl}: ${health.error}. Skipping AI validation.`)
+    logger.warn(`[AiValidator] AI endpoint is not accessible at ${config.aiBaseUrl}: ${health.error}. Skipping AI validation.`)
     return findings
   }
 
-  // To keep initial scans instant, prioritize top findings (CRITICAL/HIGH first) up to 5
   const severityRank: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 }
   const indexed = findings.map((finding, index) => ({
     finding,
@@ -241,14 +348,14 @@ export async function validateFindingsBatch(
     score: severityRank[finding.severity] || 0,
   }))
 
-  // Sort descending by severity
+  // Prioritize CRITICAL and HIGH severity findings
   indexed.sort((a, b) => b.score - a.score)
 
-  // Cap automatic initial scan AI triage to top 5 findings
-  const toValidate = indexed.slice(0, 5)
+  // Cap automatic initial scan AI triage to top 10 findings
+  const toValidate = indexed.slice(0, 10)
 
   logger.info(
-    `[AiValidator] Starting AI validation for ${toValidate.length}/${findings.length} prioritized findings using model '${config.aiModel}'`
+    `[AiValidator] Starting AI validation for ${toValidate.length}/${findings.length} findings using model '${config.aiModel}'`
   )
 
   const enrichedFindings: Finding[] = [...findings]

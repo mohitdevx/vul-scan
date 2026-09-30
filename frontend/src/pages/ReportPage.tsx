@@ -771,6 +771,7 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
     try {
       const res = await scanApi.revalidateWithAi(scan.id)
       setScan(res.scan)
+      setAllRepoScans(prev => prev.map(s => (s.id === res.scan.id ? res.scan : s)))
       success('Verification completed for all findings', 'Complete')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to complete verification'

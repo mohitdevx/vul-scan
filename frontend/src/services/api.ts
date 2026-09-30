@@ -242,7 +242,7 @@ export const scanApi = {
     ),
 
   getAiStatus: () =>
-    request<{ available: boolean; model: string; error?: string }>('/api/scan/ai-status'),
+    request<{ available: boolean; model: string; provider?: string; baseUrl?: string; models?: string[]; error?: string }>('/api/scan/ai-status'),
 
   revalidateWithAi: (scanId: string) =>
     request<{ message: string; scan: ScanItem }>(`/api/scan/${scanId}/ai-revalidate`, {

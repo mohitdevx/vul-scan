@@ -1,3 +1,8 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import os from 'node:os'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import type { Request, Response, NextFunction } from 'express'
 import { z } from 'zod'
 import { prisma } from '../config/db.js'
@@ -13,6 +18,8 @@ import {
 } from '../services/prFix.service.js'
 
 import { generateSecurityReport } from '../reporting/index.js'
+
+const execFileAsync = promisify(execFile)
 
 function normalizeRepoUrl(url: string): string {
   const trimmed = url.trim()
@@ -544,9 +551,70 @@ export async function revalidateScanWithAi(req: Request, res: Response, next: Ne
       }
     }
 
+    if (findings.length === 0) {
+      res.json({
+        message: 'No findings to revalidate',
+        scan: {
+          ...scan,
+          findings: [],
+        },
+      })
+      return
+    }
+
+    // Attempt to clone repo to obtain full source context for high-precision verification
+    const filesMap = new Map<string, string>()
+    let tmpDir = ''
+
+    if (scan.repoUrl && !scan.repoUrl.startsWith('file://')) {
+      try {
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vulscan-reverify-'))
+        const activeBranch = scan.branch || 'main'
+        try {
+          await execFileAsync('git', ['clone', '--depth', '1', '-b', activeBranch, scan.repoUrl, tmpDir], {
+            timeout: 30000,
+          })
+        } catch {
+          await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+          await fs.mkdir(tmpDir, { recursive: true }).catch(() => {})
+          await execFileAsync('git', ['clone', '--depth', '1', scan.repoUrl, tmpDir], {
+            timeout: 30000,
+          })
+        }
+
+        for (const f of findings) {
+          if (f.filePath) {
+            try {
+              const fullPath = path.join(tmpDir, f.filePath)
+              const content = await fs.readFile(fullPath, 'utf-8')
+              filesMap.set(f.filePath, content)
+            } catch {
+              // Ignore missing single file
+            }
+          }
+        }
+      } catch (cloneErr: any) {
+        logger.warn(`[Reverify] Could not clone repository for full context: ${cloneErr.message}. Utilizing synthetic snippet context.`)
+      } finally {
+        if (tmpDir) {
+          fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+        }
+      }
+    }
+
     const updatedFindings = []
     for (const f of findings) {
-      const triage = await validateFindingWithAi(f, f.snippet || '')
+      let fileContent = filesMap.get(f.filePath)
+      if (!fileContent) {
+        // Construct a synthetic file context placing the snippet accurately at the reported line
+        const snippetLines = (f.snippet || '').split('\n')
+        const targetLine = Math.max(1, f.line || 1)
+        const dummyLines = new Array(targetLine - 1).fill('// ...')
+        dummyLines.push(...snippetLines)
+        fileContent = dummyLines.join('\n')
+      }
+
+      const triage = await validateFindingWithAi(f, fileContent)
       updatedFindings.push({
         ...f,
         aiAnalysis: triage,

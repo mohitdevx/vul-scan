@@ -198,7 +198,24 @@ test('SQL Injection (SQLi) Engine Suite', async (t) => {
     assert.equal(findings.length, 0, 'Escaped SQL inputs must not trigger false positives')
   })
 
-  await t.test('12. MasterEngine registers both XSS and SQLi engines seamlessly', () => {
+  await t.test('12. ACCURACY VERIFICATION: Redis and in-memory cache operations produce ZERO findings', () => {
+    const redisCode = `
+      import Redis from "ioredis";
+      const redisClient = new Redis();
+      
+      export const getCache = async (key) => {
+        return await redisClient.get(key);
+      };
+
+      export const setCache = async (key, val) => {
+        return await redisClient.set(key, val);
+      };
+    `
+    const findings = runScan(redisCode, 'backend/config/redis.js')
+    assert.equal(findings.length, 0, 'Redis key-value lookups must not trigger SQLi findings')
+  })
+
+  await t.test('13. MasterEngine registers both XSS and SQLi engines seamlessly', () => {
     const engines = masterEngine.getEngines()
     assert.ok(engines.some(e => e.id === 'xss'))
     assert.ok(engines.some(e => e.id === 'sqli'))

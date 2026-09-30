@@ -165,26 +165,50 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
     window.open(oauthConfig.url, 'github-oauth', `width=${width},height=${height},left=${left},top=${top}`)
   }
 
-  // Fetch fix proposals whenever scanId or selectedScope changes
+  const [cachedSingleProposals, setCachedSingleProposals] = useState<Record<string, SecurityFixProposal>>({})
+  const [cachedBatchProposal, setCachedBatchProposal] = useState<BatchSecurityFixProposal | null>(null)
+
+  // Reset cache when modal closes or scanId changes
   useEffect(() => {
-    if (!isOpen || !scanId || availableFindings.length === 0) {
+    if (!isOpen) {
+      setCachedSingleProposals({})
+      setCachedBatchProposal(null)
       setSingleProposal(null)
       setBatchProposal(null)
       setCreatedPr(null)
+      setEditablePatches({})
+    }
+  }, [isOpen, scanId])
+
+  // Fetch or retrieve cached fix proposals whenever selectedScope changes
+  useEffect(() => {
+    if (!isOpen || !scanId || availableFindings.length === 0) {
       return
     }
 
     let isMounted = true
-    setIsLoading(true)
-    setCreatedPr(null)
 
     if (selectedScope === 'ALL' && availableFindings.length > 1) {
-      // Multiple findings: Batch fix
+      // 1. Check if batch proposal is already in cache
+      if (cachedBatchProposal) {
+        setBatchProposal(cachedBatchProposal)
+        setSingleProposal(null)
+        setSelectedFixIndex(0)
+        setBranchName(cachedBatchProposal.suggestedBranch)
+        setPrTitle(cachedBatchProposal.prTitle)
+        setPrDescription(cachedBatchProposal.prDescription)
+        setIsLoading(false)
+        return
+      }
+
+      // Fetch batch fix
+      setIsLoading(true)
       const targetIds = availableFindings.map(f => f.id)
       scanApi
         .generateBatchFixes(scanId, targetIds)
         .then(res => {
           if (!isMounted) return
+          setCachedBatchProposal(res.proposal)
           setBatchProposal(res.proposal)
           setSingleProposal(null)
           setSelectedFixIndex(0)
@@ -193,10 +217,37 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
           setPrDescription(res.proposal.prDescription)
 
           const patchMap: Record<string, string> = {}
+          const newSingleCache: Record<string, SecurityFixProposal> = {}
+
           res.proposal.fixes.forEach(fix => {
             patchMap[fix.findingId] = fix.replacementSnippet
+            newSingleCache[fix.findingId] = {
+              findingId: fix.findingId,
+              ruleId: fix.ruleId,
+              ruleName: fix.ruleName,
+              cwe: fix.cwe,
+              severity: fix.severity,
+              filePath: fix.filePath,
+              line: fix.line,
+              sink: fix.sink,
+              targetBranch: res.proposal.targetBranch,
+              suggestedBranch: `vulscan/fix-${fix.findingId.toLowerCase()}`,
+              searchSnippet: fix.searchSnippet,
+              replacementSnippet: fix.replacementSnippet,
+              originalContext: fix.originalContext,
+              fixedContext: fix.fixedContext,
+              explanation: fix.explanation,
+              prTitle: `fix(security): resolve ${fix.ruleName} in ${fix.filePath.split('/').pop()}`,
+              prDescription: `### Security Remediation\n\nThis Pull Request resolves **${fix.ruleName}** (${fix.cwe}) in \`${fix.filePath}:${fix.line}\`.\n\n- **Vulnerability**: ${fix.ruleName}\n- **CWE**: ${fix.cwe}\n- **Severity**: ${fix.severity}\n- **Remediation Details**: ${fix.explanation}`,
+              commitMessage: `fix(security): resolve ${fix.ruleName} in ${fix.filePath.split('/').pop()}`,
+              canCreatePr: res.proposal.canCreatePr,
+              repoOwner: res.proposal.repoOwner,
+              repoName: res.proposal.repoName,
+            }
           })
-          setEditablePatches(patchMap)
+
+          setCachedSingleProposals(prev => ({ ...newSingleCache, ...prev }))
+          setEditablePatches(prev => ({ ...patchMap, ...prev }))
         })
         .catch(err => {
           if (!isMounted) return
@@ -207,18 +258,83 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
           if (isMounted) setIsLoading(false)
         })
     } else {
-      // Single finding fix: either explicitly selected or single available finding
+      // Single finding target
       const targetId = selectedScope === 'ALL' ? availableFindings[0].id : selectedScope
+
+      // 1. Check if single proposal already in cache
+      if (cachedSingleProposals[targetId]) {
+        const cached = cachedSingleProposals[targetId]
+        setSingleProposal(cached)
+        setBatchProposal(null)
+        setBranchName(cached.suggestedBranch)
+        setPrTitle(cached.prTitle)
+        setPrDescription(cached.prDescription)
+        setEditablePatches(prev => ({
+          ...prev,
+          [targetId]: prev[targetId] !== undefined ? prev[targetId] : cached.replacementSnippet,
+        }))
+        setIsLoading(false)
+        return
+      }
+
+      // 2. Check if it's available in cachedBatchProposal
+      if (cachedBatchProposal) {
+        const fixItem = cachedBatchProposal.fixes.find(f => f.findingId === targetId)
+        if (fixItem) {
+          const proposal: SecurityFixProposal = {
+            findingId: fixItem.findingId,
+            ruleId: fixItem.ruleId,
+            ruleName: fixItem.ruleName,
+            cwe: fixItem.cwe,
+            severity: fixItem.severity,
+            filePath: fixItem.filePath,
+            line: fixItem.line,
+            sink: fixItem.sink,
+            targetBranch: cachedBatchProposal.targetBranch,
+            suggestedBranch: `vulscan/fix-${fixItem.findingId.toLowerCase()}`,
+            searchSnippet: fixItem.searchSnippet,
+            replacementSnippet: fixItem.replacementSnippet,
+            originalContext: fixItem.originalContext,
+            fixedContext: fixItem.fixedContext,
+            explanation: fixItem.explanation,
+            prTitle: `fix(security): resolve ${fixItem.ruleName} in ${fixItem.filePath.split('/').pop()}`,
+            prDescription: `### Security Remediation\n\nThis Pull Request resolves **${fixItem.ruleName}** (${fixItem.cwe}) in \`${fixItem.filePath}:${fixItem.line}\`.\n\n- **Vulnerability**: ${fixItem.ruleName}\n- **CWE**: ${fixItem.cwe}\n- **Severity**: ${fixItem.severity}\n- **Remediation Details**: ${fixItem.explanation}`,
+            commitMessage: `fix(security): resolve ${fixItem.ruleName} in ${fixItem.filePath.split('/').pop()}`,
+            canCreatePr: cachedBatchProposal.canCreatePr,
+            repoOwner: cachedBatchProposal.repoOwner,
+            repoName: cachedBatchProposal.repoName,
+          }
+          setCachedSingleProposals(prev => ({ ...prev, [targetId]: proposal }))
+          setSingleProposal(proposal)
+          setBatchProposal(null)
+          setBranchName(proposal.suggestedBranch)
+          setPrTitle(proposal.prTitle)
+          setPrDescription(proposal.prDescription)
+          setEditablePatches(prev => ({
+            ...prev,
+            [targetId]: prev[targetId] !== undefined ? prev[targetId] : proposal.replacementSnippet,
+          }))
+          setIsLoading(false)
+          return
+        }
+      }
+
+      // 3. Fetch single finding fix from backend
+      setIsLoading(true)
       scanApi
         .generateFix(scanId, targetId)
         .then(res => {
           if (!isMounted) return
+          setCachedSingleProposals(prev => ({ ...prev, [targetId]: res.proposal }))
           setSingleProposal(res.proposal)
           setBatchProposal(null)
           setBranchName(res.proposal.suggestedBranch)
           setPrTitle(res.proposal.prTitle)
           setPrDescription(res.proposal.prDescription)
-          setEditablePatches({ [targetId]: res.proposal.replacementSnippet })
+          setEditablePatches(prev => ({
+            ...prev,
+            [targetId]: prev[targetId] !== undefined ? prev[targetId] : res.proposal.replacementSnippet,
+          }))
         })
         .catch(err => {
           if (!isMounted) return
@@ -233,7 +349,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
     return () => {
       isMounted = false
     }
-  }, [isOpen, scanId, selectedScope, availableFindings.length])
+  }, [isOpen, scanId, selectedScope, availableFindings.length, cachedBatchProposal, cachedSingleProposals])
 
   if (!isOpen || availableFindings.length === 0) return null
 

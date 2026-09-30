@@ -299,6 +299,7 @@ export const FixPrModal: React.FC<FixPrModalProps> = ({
         const patches = batchProposal.fixes.map(fix => ({
           findingId: fix.findingId,
           filePath: fix.filePath,
+          line: fix.line,
           searchSnippet: fix.searchSnippet,
           replacementSnippet:
             editablePatches[fix.findingId] !== undefined

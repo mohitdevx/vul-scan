@@ -844,6 +844,7 @@ const createBatchPrSchema = z.object({
       z.object({
         findingId: z.string().min(1),
         filePath: z.string().min(1),
+        line: z.number().optional(),
         searchSnippet: z.string().min(1),
         replacementSnippet: z.string(),
       })

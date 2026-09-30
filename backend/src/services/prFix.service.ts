@@ -43,6 +43,7 @@ export interface BatchSecurityFixProposal {
 export interface BatchFilePatch {
   findingId: string
   filePath: string
+  line?: number
   searchSnippet: string
   replacementSnippet: string
 }
@@ -943,20 +944,26 @@ export async function createBatchGitHubPullRequest(params: CreateBatchPrParams):
       timeout: 45000,
     })
 
-    await execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', authUser])
+    await execFileAsync('git', ['-C', tmpDir, 'config', 'user.name', authUser || 'VulnScan Security Bot'])
     await execFileAsync(
       'git',
-      ['-C', tmpDir, 'config', 'user.email', userData.email || `${authUser}@users.noreply.github.com`]
+      ['-C', tmpDir, 'config', 'user.email', userData.email || `${authUser || 'bot'}@users.noreply.github.com`]
     )
+    await execFileAsync('git', ['-C', tmpDir, 'config', 'commit.gpgsign', 'false'])
+    await execFileAsync('git', ['-C', tmpDir, 'config', 'core.hooksPath', '/dev/null'])
+    await execFileAsync('git', ['-C', tmpDir, 'config', 'core.autocrlf', 'false'])
 
     await execFileAsync('git', ['-C', tmpDir, 'checkout', '-b', cleanBranch])
 
     const patchesByFile = new Map<string, BatchFilePatch[]>()
     for (const patch of params.patches) {
-      const list = patchesByFile.get(patch.filePath) || []
-      list.push(patch)
-      patchesByFile.set(patch.filePath, list)
+      const normalizedPath = patch.filePath.replace(/^[\/\\]+/, '').replace(/^\.\//, '')
+      const list = patchesByFile.get(normalizedPath) || []
+      list.push({ ...patch, filePath: normalizedPath })
+      patchesByFile.set(normalizedPath, list)
     }
+
+    let modifiedFileCount = 0
 
     for (const [relPath, filePatches] of patchesByFile.entries()) {
       const targetFilePath = path.join(tmpDir, relPath)
@@ -973,7 +980,8 @@ export async function createBatchGitHubPullRequest(params: CreateBatchPrParams):
         const { updatedContent, applied } = applySnippetReplacement(
           modifiedContent,
           p.searchSnippet,
-          p.replacementSnippet
+          p.replacementSnippet,
+          p.line
         )
         if (applied) {
           modifiedContent = updatedContent
@@ -985,21 +993,46 @@ export async function createBatchGitHubPullRequest(params: CreateBatchPrParams):
 
       if (modifiedContent !== currentContent) {
         await fs.writeFile(targetFilePath, modifiedContent, 'utf-8')
-        await execFileAsync('git', ['-C', tmpDir, 'add', relPath])
+        modifiedFileCount++
       }
     }
 
-    if (fixedFindingIds.length === 0) {
-      throw new Error('None of the security patches could be applied to the target files. The source code may have changed.')
+    if (fixedFindingIds.length === 0 || modifiedFileCount === 0) {
+      throw new Error(
+        'None of the security patches introduced new changes to the target files. The code in the repository may already be updated.'
+      )
     }
 
-    await execFileAsync('git', ['-C', tmpDir, 'commit', '-m', params.commitMessage])
+    // Stage all changes
+    await execFileAsync('git', ['-C', tmpDir, 'add', '-A'])
+
+    // Ensure there are staged changes before committing
+    const statusRes = await execFileAsync('git', ['-C', tmpDir, 'status', '--porcelain'])
+    if (!statusRes.stdout || !statusRes.stdout.trim()) {
+      throw new Error(
+        'No file modifications detected to commit. The repository files may already contain the security remediations.'
+      )
+    }
+
+    const commitMsg = (params.commitMessage || 'fix(security): resolve security vulnerabilities').trim()
+    try {
+      await execFileAsync('git', ['-C', tmpDir, 'commit', '-m', commitMsg])
+    } catch (commitErr: any) {
+      const commitErrMsg = commitErr.stderr || commitErr.stdout || commitErr.message
+      throw new Error(`Git commit failed: ${commitErrMsg}`)
+    }
+
     await execFileAsync('git', ['-C', tmpDir, 'remote', 'set-url', 'origin', pushUrl])
 
     logger.info(`Pushing batch fix branch ${cleanBranch} to origin...`)
-    await execFileAsync('git', ['-C', tmpDir, 'push', '-u', 'origin', cleanBranch, '--force'], {
-      timeout: 30000,
-    })
+    try {
+      await execFileAsync('git', ['-C', tmpDir, 'push', '-u', 'origin', cleanBranch, '--force'], {
+        timeout: 45000,
+      })
+    } catch (pushErr: any) {
+      const pushErrMsg = pushErr.stderr || pushErr.stdout || pushErr.message
+      throw new Error(`Git push failed: ${pushErrMsg}`)
+    }
   } finally {
     try {
       await fs.rm(tmpDir, { recursive: true, force: true })

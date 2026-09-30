@@ -351,6 +351,7 @@ export interface BatchSecurityFixProposal {
 export interface BatchFilePatch {
   findingId: string
   filePath: string
+  line?: number
   searchSnippet: string
   replacementSnippet: string
 }

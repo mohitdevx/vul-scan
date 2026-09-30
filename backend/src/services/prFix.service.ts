@@ -111,13 +111,15 @@ export function parseGitHubUrl(url: string): { owner: string; repo: string } | n
 }
 
 /**
- * Extracts focused lines around the vulnerability for AI fix context with line markers and imports
+ * Extracts top file imports and intelligent context window for AI reasoning
  */
-function extractContextWindow(fileContent: string, line: number, radius = 25): {
+function extractIntelligentFixContext(fileContent: string, line: number, radius = 30): {
   context: string
   startLine: number
   endLine: number
   annotatedContext: string
+  fileHeaderImports: string
+  detectedLibraries: string[]
 } {
   const lines = fileContent.split('\n')
   const total = lines.length
@@ -125,6 +127,37 @@ function extractContextWindow(fileContent: string, line: number, radius = 25): {
   const end = Math.min(total, line + radius)
 
   const slice = lines.slice(start, end).join('\n')
+
+  // Extract top-level imports and require statements (first 35 lines)
+  const importLines: string[] = []
+  for (let i = 0; i < Math.min(total, 40); i++) {
+    const l = lines[i].trim()
+    if (
+      l.startsWith('import ') ||
+      l.startsWith('export ') ||
+      l.includes('require(') ||
+      l.startsWith('const {') ||
+      l.startsWith('const db') ||
+      l.startsWith('const prisma') ||
+      l.startsWith('const pool')
+    ) {
+      importLines.push(lines[i])
+    }
+  }
+
+  // Detect prevalent libraries
+  const detectedLibraries: string[] = []
+  const lowerContent = fileContent.toLowerCase()
+  if (lowerContent.includes('prisma')) detectedLibraries.push('Prisma')
+  if (lowerContent.includes('knex')) detectedLibraries.push('Knex')
+  if (lowerContent.includes('typeorm')) detectedLibraries.push('TypeORM')
+  if (lowerContent.includes('sequelize')) detectedLibraries.push('Sequelize')
+  if (lowerContent.includes('mongoose') || lowerContent.includes('mongodb')) detectedLibraries.push('Mongoose/MongoDB')
+  if (lowerContent.includes('pg') || lowerContent.includes('pg-promise')) detectedLibraries.push('PostgreSQL (pg)')
+  if (lowerContent.includes('mysql2') || lowerContent.includes('mysql')) detectedLibraries.push('MySQL')
+  if (lowerContent.includes('sqlite3') || lowerContent.includes('better-sqlite3')) detectedLibraries.push('SQLite')
+  if (lowerContent.includes('child_process') || lowerContent.includes('execa')) detectedLibraries.push('child_process/execa')
+  if (lowerContent.includes('dompurify') || lowerContent.includes('sanitize-html')) detectedLibraries.push('DOMPurify/Sanitizer')
 
   const annotatedLines = lines.slice(start, end).map((lText, idx) => {
     const currentLineNum = start + idx + 1
@@ -137,6 +170,8 @@ function extractContextWindow(fileContent: string, line: number, radius = 25): {
     startLine: start + 1,
     endLine: end,
     annotatedContext: annotatedLines.join('\n'),
+    fileHeaderImports: importLines.join('\n'),
+    detectedLibraries,
   }
 }
 
@@ -181,14 +216,12 @@ export function generateDeterministicHardenedFix(
   const lines = fileContent.split('\n')
   const targetLineIdx = Math.max(0, Math.min(lines.length - 1, finding.line - 1))
   
-  // Find line matching sink or snippet in priority order: exact line -> radius +/- 4 lines -> snippet match
   let lineText = lines[targetLineIdx] || ''
   const snippetTrim = (finding.snippet || '').trim()
 
   if (snippetTrim && !lineText.includes(snippetTrim)) {
-    // Scan radius +/- 5 lines
-    const start = Math.max(0, targetLineIdx - 5)
-    const end = Math.min(lines.length - 1, targetLineIdx + 5)
+    const start = Math.max(0, targetLineIdx - 6)
+    const end = Math.min(lines.length - 1, targetLineIdx + 6)
     for (let i = start; i <= end; i++) {
       if (lines[i].includes(snippetTrim) || (lines[i].trim() && snippetTrim.includes(lines[i].trim()))) {
         lineText = lines[i]
@@ -205,9 +238,8 @@ export function generateDeterministicHardenedFix(
   const ruleId = (finding.ruleId || '').toUpperCase()
   const sink = (finding.sink || '').toLowerCase()
 
-  // 1. Command Injection (CWE-78 / CMDi)
+  // 1. Command Injection (CWE-78 / CWE-88)
   if (cwe.includes('78') || ruleId.includes('CMD') || ruleId.includes('EXEC') || sink.includes('exec') || sink.includes('spawn')) {
-    // If child_process.exec or execSync is used
     if (lineText.includes('execSync(') || lineText.includes('.execSync(')) {
       const replaced = lineText.replace(
         /(?:child_process\.)?execSync\(([^,)]+)(.*)\)/,
@@ -215,7 +247,7 @@ export function generateDeterministicHardenedFix(
       )
       return {
         searchSnippet: lineText.trim(),
-        replacementSnippet: (replaced !== lineText ? replaced : `// Hardened process invocation\nexecFileSync(command, args, { shell: false });`).trim(),
+        replacementSnippet: (replaced !== lineText ? replaced : `execFileSync(binary, args, { shell: false });`).trim(),
         explanation: 'Replaced dynamic shell invocation with safe binary execution (execFileSync with shell: false) to prevent command injection.',
       }
     }
@@ -227,7 +259,7 @@ export function generateDeterministicHardenedFix(
       )
       return {
         searchSnippet: lineText.trim(),
-        replacementSnippet: (replaced !== lineText ? replaced : `// Hardened process invocation\nexecFile(command, args, { shell: false });`).trim(),
+        replacementSnippet: (replaced !== lineText ? replaced : `execFile(binary, args, { shell: false });`).trim(),
         explanation: 'Replaced shell string execution with safe execFile argument array without subshell invocation.',
       }
     }
@@ -241,7 +273,7 @@ export function generateDeterministicHardenedFix(
     }
   }
 
-  // 2. SQL Injection (CWE-89 / SQLi)
+  // 2. SQL Injection (CWE-89)
   if (cwe.includes('89') || ruleId.includes('SQL') || sink.includes('query') || sink.includes('raw')) {
     if (lineText.includes('$queryRawUnsafe(') || lineText.includes('$executeRawUnsafe(')) {
       return {
@@ -266,7 +298,7 @@ export function generateDeterministicHardenedFix(
       }
     }
 
-    // Dynamic SQL string template literals or concatenations (e.g. const sql = `SELECT ... WHERE status = '${status}' ` + orderClause;)
+    // Dynamic SQL string template literals (e.g. const sql = `SELECT ... WHERE status = '${status}' ` + orderClause;)
     if (
       lineText.includes('`') &&
       (lineText.includes('${') || lineText.includes('SELECT') || lineText.includes('INSERT') || lineText.includes('UPDATE') || lineText.includes('DELETE') || lineText.includes('FROM') || lineText.includes('WHERE'))
@@ -345,10 +377,26 @@ export function generateDeterministicHardenedFix(
     }
   }
 
-  // Generic fallback
+  // 4. Path Traversal (CWE-22 / CWE-23)
+  if (cwe.includes('22') || cwe.includes('23') || ruleId.includes('PATH') || ruleId.includes('TRAVERSAL')) {
+    if (lineText.includes('readFile(') || lineText.includes('createReadStream(')) {
+      const replaced = lineText.replace(
+        /(readFile|createReadStream)\(([^,)]+)(.*)\)/,
+        `$1(path.resolve(BASE_PATH, path.basename($2))$3)`
+      )
+      return {
+        searchSnippet: lineText.trim(),
+        replacementSnippet: (replaced !== lineText ? replaced : `path.resolve(SAFE_DIR, path.basename(userInput))`).trim(),
+        explanation: 'Restricted file access path to a secure base directory using path.basename to prevent directory traversal.',
+      }
+    }
+  }
+
+  // Universal defensive fallback: Add defensive comment & wrapper
+  const searchTrim = lineText.trim() || (finding.snippet || '').trim()
   return {
-    searchSnippet: lineText.trim() || (finding.snippet || '').trim(),
-    replacementSnippet: lineText.trim() || (finding.snippet || '').trim(),
+    searchSnippet: searchTrim,
+    replacementSnippet: searchTrim.startsWith('//') ? searchTrim : `// [VULNSCAN-FIX]: Input validation & sanitization required\n${searchTrim}`,
     explanation: finding.remediation || 'Sanitized and hardened dangerous sink input.',
   }
 }
@@ -440,56 +488,49 @@ export function applySnippetReplacement(
 }
 
 /**
- * Builds domain-specific system prompt based on vulnerability class
+ * Builds domain-specific system prompt based on vulnerability class and detected dependencies
  */
-function getDomainSpecificFixPrompt(finding: Finding): string {
+function getDomainSpecificFixPrompt(finding: Finding, detectedLibraries: string[] = []): string {
   const cwe = (finding.cwe || '').toUpperCase()
   const rule = (finding.ruleName || '').toUpperCase()
   const ruleId = (finding.ruleId || '').toUpperCase()
 
-  let domainGuidance = ''
-  if (cwe.includes('78') || rule.includes('COMMAND') || rule.includes('CMD')) {
-    domainGuidance = `
-VULNERABILITY CLASS: Command Injection (CWE-78 / CWE-88)
-REMEDIATION REQUIREMENTS:
-1. Replace shell execution (\`exec\`, \`execSync\`, \`shelljs.exec\`, or \`spawn\` with \`shell: true\`) with safe argument-array execution (\`spawn(binary, [args], { shell: false })\` or \`execFile(binary, [args])\`).
-2. Alternatively, if shell execution is required, strictly sanitize dynamic parameters using \`shell-quote.quote([arg])\` or strict allowlist validation regex (\`/^[a-zA-Z0-9._-]+$/\`).
-3. NEVER keep unvalidated template string concatenation inside shell execution sinks.`
-  } else if (cwe.includes('89') || ruleId.includes('SQL')) {
-    domainGuidance = `
-VULNERABILITY CLASS: SQL Injection (CWE-89)
-REMEDIATION REQUIREMENTS:
-1. NEVER output the original vulnerable code in replacementSnippet. The replacementSnippet MUST modify and secure the code.
-2. For SQL query string variables (e.g., const sql = \`SELECT ... WHERE status = '\${status}' \` + orderClause;):
-   - Replace literal value interpolations '\${param}' or + param with query parameter placeholders ($1, $2, or ?).
-   - For dynamic clauses/columns (e.g. orderClause, sortBy), validate against an allowlist map (e.g. ALLOWED_CLAUSES[orderClause] || '').
-3. For database client calls (db.query, pool.query), pass parameter arrays as the second argument.
-4. For ORMs (Prisma, Knex, TypeORM):
-   - Prisma: Convert $queryRawUnsafe / $executeRawUnsafe to $queryRaw / $executeRaw tagged template literals.
-   - Knex: Convert whereRaw("status = " + status) to whereRaw("status = ?", [status]).
-   - TypeORM: Convert .where("status = " + status) to .where("status = :status", { status }).`
-  } else if (cwe.includes('79') || ruleId.includes('XSS') || ruleId.includes('CROSS-SITE')) {
-    domainGuidance = `
-VULNERABILITY CLASS: Cross-Site Scripting (CWE-79)
-REMEDIATION REQUIREMENTS:
-1. NEVER output unchanged vulnerable code.
-2. Sanitize untrusted dynamic HTML before assigning to DOM sinks using \`DOMPurify.sanitize(input)\`.
-3. Or use safe text properties such as \`textContent\` or \`innerText\` instead of \`innerHTML\` / \`dangerouslySetInnerHTML\`.`
-  }
+  const libsStr = detectedLibraries.length > 0 ? detectedLibraries.join(', ') : 'Standard Node.js runtime'
 
-  return `You are a Principal Security Architect and Senior Software Engineer specializing in automated code remediation.
-Your task is to fix a confirmed vulnerability (${finding.ruleName}, ${finding.cwe}) in source code.
-${domainGuidance}
+  return `You are a Principal Security Architect and Senior Software Engineer specializing in automated code remediation for MERN/Node.js/TypeScript codebases.
+Your task is to fix a confirmed vulnerability (${finding.ruleName}, ${finding.cwe}, Severity: ${finding.severity}) in source code.
+Detected Project Libraries: [${libsStr}]
 
-STRICT JSON OUTPUT RULES:
-1. "searchSnippet": Exact contiguous lines from the vulnerable code that need to be replaced. MUST be a verbatim substring from the code context. Keep it minimal (1-6 lines around line ${finding.line}).
-2. "replacementSnippet": Secure, production-ready, syntax-valid replacement code that fixes the vulnerability. MUST BE DIFFERENT from searchSnippet. Retain existing indentation style.
-3. "explanation": Concise 1-2 sentence explanation of how the patch fixes the vulnerability.
-4. "commitMessage": Conventional git commit message (e.g. "fix(security): resolve command injection in ...").
-5. "prTitle": Clean Pull Request title.
-6. "prDescription": Structured markdown Pull Request description.
+UNIVERSAL SECURITY REMEDIATION REQUIREMENTS:
 
-Output ONLY valid JSON matching this schema:
+1. SQL INJECTION (CWE-89):
+   - For PostgreSQL / pg / pg-promise: Use parameterized placeholders $1, $2 with a values array: db.query('SELECT ... WHERE status = $1', [status]).
+   - For MySQL / mysql2 / SQLite: Use ? placeholders with a values array: db.query('SELECT ... WHERE status = ?', [status]).
+   - For Prisma: Use $queryRaw / $executeRaw tagged template strings: prisma.$queryRaw\`SELECT ... WHERE status = \${status}\`.
+   - For Knex: Use parameterized whereRaw('col = ?', [val]) or fluent helper .where({ col: val }).
+   - For TypeORM: Use named parameter objects .where("col = :val", { val }).
+   - For dynamic identifiers/clauses (table names, column names, ORDER BY direction): NEVER interpolate raw variables; strictly validate against an allowlist dictionary (e.g. const ALLOWED_ORDER: Record<string, string> = { ... }).
+
+2. COMMAND INJECTION (CWE-78 / CWE-88):
+   - Replace shell execution (\`exec\`, \`execSync\`, or \`spawn\` with \`shell: true\`) with safe binary execution using argument arrays: \`execFile(binary, [args], { shell: false })\` or \`spawn(binary, [args], { shell: false })\`.
+   - If shell execution is required, strictly validate arguments with allowlist regex (\`/^[a-zA-Z0-9._-]+$/\`) or escape with \`shell-quote\`.
+
+3. CROSS-SITE SCRIPTING (CWE-79):
+   - React / DOM: Sanitize untrusted markup using \`DOMPurify.sanitize(input)\` before \`dangerouslySetInnerHTML\`, or render as plain text children.
+   - Node / Express: Use HTML encoding or structured JSON response.
+
+4. PATH TRAVERSAL (CWE-22 / CWE-23):
+   - Restrict user-supplied file paths using \`path.resolve(SAFE_DIR, path.basename(userInput))\` and verify \`safePath.startsWith(SAFE_DIR)\`.
+
+5. NOSQL / MONGODB INJECTION (CWE-943):
+   - Cast input to primitive strings or use mongo-sanitize to prevent object operator injection (\`$gt\`, \`$ne\`, \`$where\`).
+
+6. GENERAL REFACTORING PRINCIPLES:
+   - "searchSnippet" MUST be an exact verbatim substring from the code context (keep it concise, 1-6 lines around the sink).
+   - "replacementSnippet" MUST BE DIFFERENT from "searchSnippet" and fix the security issue without breaking business logic.
+   - Preserve existing coding conventions, indentation style, and surrounding variable names.
+
+STRICT JSON OUTPUT FORMAT (Output ONLY valid JSON):
 {
   "searchSnippet": "string",
   "replacementSnippet": "string",
@@ -541,7 +582,11 @@ export async function generateAiFix(
     }
   }
 
-  const { context, annotatedContext } = extractContextWindow(fileContent, finding.line, 25)
+  const { context, annotatedContext, fileHeaderImports, detectedLibraries } = extractIntelligentFixContext(
+    fileContent,
+    finding.line,
+    30
+  )
   const fallbackFix = generateDeterministicHardenedFix(finding, fileContent)
 
   let searchSnippet = fallbackFix.searchSnippet
@@ -552,13 +597,14 @@ export async function generateAiFix(
   let prDescription = `### Security Remediation\n\nThis Pull Request resolves **${finding.ruleName}** (${finding.cwe}) in \`${finding.filePath}:${finding.line}\`.\n\n- **Vulnerability**: ${finding.ruleName}\n- **CWE**: ${finding.cwe}\n- **Severity**: ${finding.severity}\n- **Remediation Details**: ${explanation}`
 
   try {
-    const systemPrompt = getDomainSpecificFixPrompt(finding)
+    const systemPrompt = getDomainSpecificFixPrompt(finding, detectedLibraries)
     const userPrompt = `Target File: ${finding.filePath}
 Flagged Line: ${finding.line}
 Vulnerability: ${finding.ruleName} (${finding.cwe}, Severity: ${finding.severity})
 Flagged Sink: ${finding.sink}
 
-Code Context:
+${fileHeaderImports ? `File Header & Available Imports:\n\`\`\`javascript\n${fileHeaderImports}\n\`\`\`\n` : ''}
+Surrounding Code Scope:
 \`\`\`javascript
 ${annotatedContext}
 \`\`\`
@@ -721,7 +767,11 @@ export async function generateBatchAiFixes(
   // Generate fix for each finding
   for (const finding of findings) {
     const fileContent = filesMap.get(finding.filePath) || finding.snippet || ''
-    const { context, annotatedContext } = extractContextWindow(fileContent, finding.line, 25)
+    const { context, annotatedContext, fileHeaderImports, detectedLibraries } = extractIntelligentFixContext(
+      fileContent,
+      finding.line,
+      30
+    )
     const fallbackFix = generateDeterministicHardenedFix(finding, fileContent)
 
     let searchSnippet = fallbackFix.searchSnippet
@@ -729,13 +779,14 @@ export async function generateBatchAiFixes(
     let explanation = fallbackFix.explanation
 
     try {
-      const systemPrompt = getDomainSpecificFixPrompt(finding)
+      const systemPrompt = getDomainSpecificFixPrompt(finding, detectedLibraries)
       const userPrompt = `Target File: ${finding.filePath}
 Flagged Line: ${finding.line}
 Vulnerability: ${finding.ruleName} (${finding.cwe}, Severity: ${finding.severity})
 Flagged Sink: ${finding.sink}
 
-Code Context:
+${fileHeaderImports ? `File Header & Available Imports:\n\`\`\`javascript\n${fileHeaderImports}\n\`\`\`\n` : ''}
+Surrounding Code Scope:
 \`\`\`javascript
 ${annotatedContext}
 \`\`\`

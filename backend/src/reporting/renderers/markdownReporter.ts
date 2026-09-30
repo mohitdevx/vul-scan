@@ -100,6 +100,24 @@ export class MarkdownReporter implements ReportRenderer<string> {
   }
 
   private renderFindingMarkdown(finding: SecurityFinding, _orderNum: number): string {
+    const isFp = finding.status === 'false-positive' || finding.analysis?.isFalsePositive === true
+
+    if (isFp) {
+      let fpMd = `### [FALSE POSITIVE] ${finding.id} — ${finding.rule.name}\n\n`
+      fpMd += `**Severity:** \`FALSE POSITIVE\` | `
+      fpMd += `**CWE:** \`${finding.rule.cwe}\` | `
+      fpMd += `**Rule:** \`${finding.rule.id}\` | `
+      fpMd += `**Confidence:** \`${finding.confidence}%\` | `
+      fpMd += `**Status:** \`FALSE_POSITIVE\`\n\n`
+
+      fpMd += `> **Evaluation Note:** ${finding.analysis?.reasoning || 'Verified as a benign pattern or safe execution context. No security risk detected.'}\n\n`
+      fpMd += `- **Location:** \`${finding.location.file}:${finding.location.line}\`\n`
+      fpMd += `- **Flagged Sink:** \`${finding.taintFlow.sink.expression}\`\n`
+      fpMd += `- **Action Required:** None (Safe implementation).\n\n`
+      fpMd += `---\n\n`
+      return fpMd
+    }
+
     let fMd = `### [${finding.severity}] ${finding.id} — ${finding.rule.name}\n\n`
 
     fMd += `**Severity:** \`${finding.severity}\` | `

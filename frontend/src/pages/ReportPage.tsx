@@ -925,22 +925,25 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
 
   // Handle Fix & PR trigger from toolbar: opens remediation modal with target findings
   const handleOpenFixModal = (targetFinding?: FindingWithBranch) => {
-    const targets = (filteredFindings.length > 0 ? filteredFindings : displayedFindings).filter(
-      f => !f.aiAnalysis?.isFalsePositive
-    )
-    const finalTargets = targets.length > 0 ? targets : (filteredFindings.length > 0 ? filteredFindings : displayedFindings)
+    if (targetFinding?.aiAnalysis?.isFalsePositive) {
+      info('This finding is verified as a False Positive / safe pattern. No code remediation required.', 'Safe Finding')
+      return
+    }
 
-    if (finalTargets.length > 0) {
+    const availableFindings = filteredFindings.length > 0 ? filteredFindings : displayedFindings
+    const actionableTargets = availableFindings.filter(f => !f.aiAnalysis?.isFalsePositive)
+
+    if (actionableTargets.length > 0) {
       if (targetFinding) {
         setSelectedFindingForFix(targetFinding)
-        setBatchFindingsForFix(finalTargets)
+        setBatchFindingsForFix(actionableTargets)
       } else {
         setSelectedFindingForFix(null)
-        setBatchFindingsForFix(finalTargets)
+        setBatchFindingsForFix(actionableTargets)
       }
       setIsFixModalOpen(true)
     } else {
-      info('No security findings available to remediate.', 'Info')
+      info('All detected items are false positives or safe. No Pull Request fix needed.', 'All Safe')
     }
   }
 
@@ -1218,42 +1221,45 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
                 </button>
               </div>
 
-              {/* Fix & PR Button */}
-              <div className="flex items-center gap-2 pb-2.5">
-                <button
-                  type="button"
-                  onClick={() => handleOpenFixModal()}
-                  className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg font-mono text-xs font-semibold shadow-xs transition-all cursor-pointer ${
-                    Object.keys(sentPrs).length > 0
-                      ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25'
-                      : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                  }`}
-                  title={
-                    Object.keys(sentPrs).length > 0
-                      ? 'Pull Request already sent to GitHub'
-                      : 'Generate security fixes and open Pull Request on GitHub'
-                  }
-                >
-                  {Object.keys(sentPrs).length > 0 ? (
-                    <>
-                      <RiCheckLine className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>PR Sent ({Object.keys(sentPrs).length})</span>
-                    </>
-                  ) : (
-                    <>
-                      <RiGitPullRequestLine className="w-3.5 h-3.5 text-white" />
-                      <span>
-                        {(filteredFindings.length > 1 || displayedFindings.length > 1)
-                          ? `Fix & PR (${
-                              filteredFindings.filter(f => !f.aiAnalysis?.isFalsePositive).length ||
-                              displayedFindings.filter(f => !f.aiAnalysis?.isFalsePositive).length
-                            })`
-                          : 'Fix & PR'}
-                      </span>
-                    </>
-                  )}
-                </button>
-              </div>
+              {/* Fix & PR Button: Only display when confirmed actionable vulnerabilities exist */}
+              {((filteredFindings.length > 0 ? filteredFindings : displayedFindings).some(f => !f.aiAnalysis?.isFalsePositive)) && (
+                <div className="flex items-center gap-2 pb-2.5">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenFixModal()}
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg font-mono text-xs font-semibold shadow-xs transition-all cursor-pointer ${
+                      Object.keys(sentPrs).length > 0
+                        ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25'
+                        : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    }`}
+                    title={
+                      Object.keys(sentPrs).length > 0
+                        ? 'Pull Request already sent to GitHub'
+                        : 'Generate security fixes and open Pull Request on GitHub'
+                    }
+                  >
+                    {Object.keys(sentPrs).length > 0 ? (
+                      <>
+                        <RiCheckLine className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>PR Sent ({Object.keys(sentPrs).length})</span>
+                      </>
+                    ) : (
+                      <>
+                        <RiGitPullRequestLine className="w-3.5 h-3.5 text-white" />
+                        <span>
+                          {(filteredFindings.filter(f => !f.aiAnalysis?.isFalsePositive).length > 1 ||
+                            displayedFindings.filter(f => !f.aiAnalysis?.isFalsePositive).length > 1)
+                            ? `Fix & PR (${
+                                filteredFindings.filter(f => !f.aiAnalysis?.isFalsePositive).length ||
+                                displayedFindings.filter(f => !f.aiAnalysis?.isFalsePositive).length
+                              })`
+                            : 'Fix & PR'}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Publication-Grade Compiled HTML Report */}

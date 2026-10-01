@@ -130,10 +130,30 @@ export interface RequestlySuiteItem {
   rules: any[]
 }
 
+export interface ScanLogEntry {
+  timestamp: string
+  level: 'info' | 'warn' | 'success' | 'debug' | 'error'
+  stage: 'discovery' | 'ast_analysis' | 'ai_logic' | 'requestly_mcp'
+  message: string
+  details?: Record<string, any>
+}
+
+export interface McpTransaction {
+  id: string
+  tool: string
+  method: string
+  requestPayload: Record<string, any>
+  responsePayload: Record<string, any>
+  status: 'SUCCESS' | 'SIMULATED' | 'ERROR'
+  latencyMs: number
+  timestamp: string
+}
+
 export interface McpBundleItem {
   vscodeMcpConfig: any
   mcpTools: any[]
   instructions: string
+  transactions?: McpTransaction[]
 }
 
 export interface ApiAuditResponse {
@@ -156,6 +176,7 @@ export interface ApiAuditResponse {
   }
   requestlySuite: RequestlySuiteItem
   mcpBundle: McpBundleItem
+  logs?: ScanLogEntry[]
 }
 
 export interface RepositoryItem {

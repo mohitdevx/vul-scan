@@ -1101,6 +1101,39 @@ export async function auditScanApiEndpoints(req: Request, res: Response, next: N
 
       const mcpBundle = generateRequestlyMcpBundle(requestlySuite)
 
+      const logs = [
+        {
+          timestamp: new Date().toISOString(),
+          level: 'info' as const,
+          stage: 'discovery' as const,
+          message: `Initialized codebase scanner across ${discovery.totalFilesScanned} source files.`,
+        },
+        {
+          timestamp: new Date().toISOString(),
+          level: 'success' as const,
+          stage: 'discovery' as const,
+          message: `Extracted ${discovery.endpoints.length} backend API route definitions across [${discovery.frameworks.join(', ') || 'Custom Router'}].`,
+        },
+        {
+          timestamp: new Date().toISOString(),
+          level: 'info' as const,
+          stage: 'ast_analysis' as const,
+          message: `Mapped HTTP verbs (${Object.entries(discovery.summary?.methodCounts || {}).filter(([_, c]) => c > 0).map(([m, c]) => `${m}: ${c}`).join(', ')}), path parameters, and auth middleware.`,
+        },
+        {
+          timestamp: new Date().toISOString(),
+          level: auditResults.findings.length > 0 ? ('warn' as const) : ('success' as const),
+          stage: 'ai_logic' as const,
+          message: `Completed OWASP API Security Top 10 audit: ${auditResults.findings.length} potential logic flaws identified (${auditResults.summary.critical} critical, ${auditResults.summary.high} high, ${auditResults.summary.medium} medium).`,
+        },
+        {
+          timestamp: new Date().toISOString(),
+          level: 'success' as const,
+          stage: 'requestly_mcp' as const,
+          message: `Synchronized ${requestlySuite.rules.length} Requestly testing rules & formatted stdio JSON-RPC payloads for @requestly/mcp server.`,
+        },
+      ]
+
       res.json({
         success: true,
         repoUrl,
@@ -1113,6 +1146,7 @@ export async function auditScanApiEndpoints(req: Request, res: Response, next: N
         summary: auditResults.summary,
         requestlySuite,
         mcpBundle,
+        logs,
       })
     } finally {
       await cleanup()

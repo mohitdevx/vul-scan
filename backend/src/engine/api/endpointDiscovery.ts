@@ -386,12 +386,22 @@ async function collectApiFiles(dir: string, baseDir: string): Promise<{ path: st
 
 export async function discoverEndpoints(
   dirPath: string
-): Promise<{ endpoints: DiscoveredEndpoint[]; frameworks: string[]; totalFilesScanned: number }> {
+): Promise<{
+  endpoints: DiscoveredEndpoint[]
+  frameworks: string[]
+  totalFilesScanned: number
+  summary: {
+    authenticatedCount: number
+    publicCount: number
+    methodCounts: Record<HttpMethod, number>
+  }
+}> {
   const files = await collectApiFiles(dirPath, dirPath)
   const result = discoverCodebaseEndpoints(files)
   return {
     endpoints: result.endpoints,
     frameworks: result.frameworksDetected,
     totalFilesScanned: files.length,
+    summary: result.summary,
   }
 }

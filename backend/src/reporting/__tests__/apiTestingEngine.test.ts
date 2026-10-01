@@ -101,9 +101,9 @@ describe('API Testing & Security Engine Suite', () => {
     assert.ok(suite.rules.some(r => r.name.includes('[API2 Auth Bypass Test]')))
     assert.ok(suite.rules.some(r => r.name.includes('[API3 Mass Assignment Test]')))
 
-    const mcpClient = new RequestlyMcpClient({ apiKey: 'test_key_123' })
+    const mcpClient = new RequestlyMcpClient()
     const mcpConfig = mcpClient.getMcpConfigJson()
-    assert.ok(mcpConfig['Requestly Server'])
+    assert.ok(mcpConfig.mcpServers['requestly-security-suite'])
   })
 
   it('4. Detects BOLA and Mass Assignment flaws via deterministic audit', () => {

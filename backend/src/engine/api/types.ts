@@ -36,3 +36,22 @@ export interface EndpointDiscoveryResult {
     methodCounts: Record<HttpMethod, number>
   }
 }
+
+export interface ScanLogEntry {
+  timestamp: string
+  level: 'info' | 'warn' | 'success' | 'debug' | 'error'
+  stage: 'discovery' | 'ast_analysis' | 'ai_logic' | 'requestly_mcp'
+  message: string
+  details?: Record<string, any>
+}
+
+export interface McpTransaction {
+  id: string
+  tool: string
+  method: string
+  requestPayload: Record<string, any>
+  responsePayload: Record<string, any>
+  status: 'SUCCESS' | 'SIMULATED' | 'ERROR'
+  latencyMs: number
+  timestamp: string
+}

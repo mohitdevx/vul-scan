@@ -53,18 +53,21 @@ export const ApiTestingPanel: React.FC<ApiTestingPanelProps> = ({ scanId, repoUr
         branch,
         targetBaseUrl,
       })
+      if (!res) {
+        throw new Error('No response returned from API scanner')
+      }
       setAuditData(res)
-      if (res.endpoints.length > 0) {
+      if (res.endpoints && res.endpoints.length > 0) {
         setSelectedEndpoint(res.endpoints[0])
       }
-      if (res.findings.length > 0) {
+      if (res.findings && res.findings.length > 0) {
         setSelectedFinding(res.findings[0])
       }
       if (res.mcpBundle?.transactions && res.mcpBundle.transactions.length > 0) {
         setSelectedTransaction(res.mcpBundle.transactions[0])
       }
       toast.success(
-        `Discovered ${res.totalEndpoints} endpoints across ${res.totalFilesScanned} files with ${res.findings.length} security alerts.`
+        `Discovered ${res.totalEndpoints || 0} endpoints across ${res.totalFilesScanned || 0} files with ${res.findings?.length || 0} security alerts.`
       )
     } catch (err: any) {
       toast.error(err.message || 'Failed to complete API security audit')
@@ -96,10 +99,11 @@ export const ApiTestingPanel: React.FC<ApiTestingPanelProps> = ({ scanId, repoUr
 
   const filteredEndpoints = useMemo(() => {
     return (auditData?.endpoints || []).filter((ep) => {
+      if (!ep) return false
       if (selectedMethod !== 'ALL' && ep.method !== selectedMethod) return false
       if (searchQuery) {
         const q = searchQuery.toLowerCase()
-        return ep.path.toLowerCase().includes(q) || ep.filePath.toLowerCase().includes(q)
+        return (ep.path || '').toLowerCase().includes(q) || (ep.filePath || '').toLowerCase().includes(q)
       }
       return true
     })
@@ -107,15 +111,16 @@ export const ApiTestingPanel: React.FC<ApiTestingPanelProps> = ({ scanId, repoUr
 
   const filteredFindings = useMemo(() => {
     return (auditData?.findings || []).filter((f) => {
-      if (selectedCategory !== 'ALL' && !f.category.toLowerCase().includes(selectedCategory.toLowerCase())) {
+      if (!f) return false
+      if (selectedCategory !== 'ALL' && !(f.category || '').toLowerCase().includes(selectedCategory.toLowerCase())) {
         return false
       }
       if (searchQuery) {
         const q = searchQuery.toLowerCase()
         return (
-          f.path.toLowerCase().includes(q) ||
-          f.title.toLowerCase().includes(q) ||
-          f.cwe.toLowerCase().includes(q)
+          (f.path || '').toLowerCase().includes(q) ||
+          (f.title || '').toLowerCase().includes(q) ||
+          (f.cwe || '').toLowerCase().includes(q)
         )
       }
       return true
@@ -163,7 +168,7 @@ export const ApiTestingPanel: React.FC<ApiTestingPanelProps> = ({ scanId, repoUr
             {loading ? (
               <>
                 <div className="w-3.5 h-3.5 border-2 border-canvas border-t-text-primary rounded-full animate-spin" />
-                <span>Crawling Routes...</span>
+                <span>Auditing APIs...</span>
               </>
             ) : (
               <>
@@ -188,6 +193,19 @@ export const ApiTestingPanel: React.FC<ApiTestingPanelProps> = ({ scanId, repoUr
         </div>
       </div>
 
+      {/* Loading Progress State */}
+      {loading && (
+        <div className="p-10 rounded-lg bg-surface/60 border border-border-subtle text-center space-y-3 font-mono text-xs animate-in fade-in duration-200">
+          <div className="w-8 h-8 border-2 border-border-subtle border-t-text-primary rounded-full animate-spin mx-auto" />
+          <div className="space-y-1">
+            <h4 className="text-xs font-semibold text-text-primary">Crawling &amp; Auditing API Route Declarations...</h4>
+            <p className="text-[11px] text-text-muted max-w-md mx-auto leading-relaxed">
+              Inspecting AST syntax trees for Express / Fastify / Next.js route handlers, checking authorization boundaries, testing OWASP API vulnerabilities, and generating Requestly MCP payloads.
+            </p>
+          </div>
+        </div>
+      )}
+
       {!auditData && !loading && (
         <div className="p-12 rounded-lg bg-surface/50 border border-border-subtle text-center space-y-3">
           <div className="w-10 h-10 rounded-lg bg-surface-muted border border-border-subtle text-text-muted flex items-center justify-center mx-auto">
@@ -205,26 +223,26 @@ export const ApiTestingPanel: React.FC<ApiTestingPanelProps> = ({ scanId, repoUr
         </div>
       )}
 
-      {auditData && (
+      {auditData && !loading && (
         <div className="space-y-6">
           {/* Key Metrics Bar */}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 font-mono text-xs">
             <div className="p-3 rounded-lg bg-surface border border-border-subtle space-y-1">
               <span className="text-[10px] text-text-muted uppercase">Endpoints</span>
-              <p className="text-lg font-bold text-text-primary">{auditData.totalEndpoints}</p>
-              <span className="text-[10px] text-text-muted truncate block">{auditData.frameworks.join(', ') || 'Native HTTP'}</span>
+              <p className="text-lg font-bold text-text-primary">{auditData.totalEndpoints || 0}</p>
+              <span className="text-[10px] text-text-muted truncate block">{(auditData.frameworks || []).join(', ') || 'Native HTTP'}</span>
             </div>
             <div className="p-3 rounded-lg bg-surface border border-border-subtle space-y-1">
               <span className="text-[10px] text-text-muted uppercase">Files Scanned</span>
-              <p className="text-lg font-bold text-text-primary">{auditData.totalFilesScanned}</p>
+              <p className="text-lg font-bold text-text-primary">{auditData.totalFilesScanned || 0}</p>
               <span className="text-[10px] text-text-muted">Route handlers</span>
             </div>
             <div className="p-3 rounded-lg bg-surface border border-border-subtle space-y-1">
               <span className="text-[10px] text-text-muted uppercase">OWASP Flaws</span>
               <p className="text-lg font-bold text-rose-400">
-                {auditData.summary.critical + auditData.summary.high + auditData.summary.medium}
+                {(auditData.summary?.critical || 0) + (auditData.summary?.high || 0) + (auditData.summary?.medium || 0)}
               </p>
-              <span className="text-[10px] text-rose-400/80">{auditData.summary.critical} Crit / {auditData.summary.high} High</span>
+              <span className="text-[10px] text-rose-400/80">{auditData.summary?.critical || 0} Crit / {auditData.summary?.high || 0} High</span>
             </div>
             <div className="p-3 rounded-lg bg-surface border border-border-subtle space-y-1">
               <span className="text-[10px] text-text-muted uppercase">Requestly Rules</span>
@@ -289,7 +307,7 @@ export const ApiTestingPanel: React.FC<ApiTestingPanelProps> = ({ scanId, repoUr
                     : 'text-text-muted hover:text-text-secondary'
                 }`}
               >
-                Endpoints ({auditData.endpoints.length})
+                Endpoints ({(auditData.endpoints || []).length})
               </button>
               <button
                 onClick={() => setActiveTab('vulnerabilities')}
@@ -299,7 +317,7 @@ export const ApiTestingPanel: React.FC<ApiTestingPanelProps> = ({ scanId, repoUr
                     : 'text-text-muted hover:text-text-secondary'
                 }`}
               >
-                OWASP Flaws ({auditData.findings.length})
+                OWASP Flaws ({(auditData.findings || []).length})
               </button>
               <button
                 onClick={() => setActiveTab('mcp_console')}
@@ -444,9 +462,9 @@ export const ApiTestingPanel: React.FC<ApiTestingPanelProps> = ({ scanId, repoUr
                     {/* Parameters */}
                     <div className="space-y-1.5">
                       <span className="text-[10px] uppercase font-semibold text-text-muted">
-                        Parameters ({selectedEndpoint.params.length})
+                        Parameters ({(selectedEndpoint.params || []).length})
                       </span>
-                      {selectedEndpoint.params.length > 0 ? (
+                      {selectedEndpoint.params && selectedEndpoint.params.length > 0 ? (
                         <div className="flex flex-wrap gap-1.5">
                           {selectedEndpoint.params.map((p, idx) => (
                             <span
@@ -472,7 +490,7 @@ export const ApiTestingPanel: React.FC<ApiTestingPanelProps> = ({ scanId, repoUr
                       </span>
                       {selectedEndpoint.hasAuthGuard ? (
                         <p className="text-emerald-400 text-[11px]">
-                          ✓ Protected: {selectedEndpoint.authGuards.join(', ')}
+                          ✓ Protected: {(selectedEndpoint.authGuards || []).join(', ') || 'Auth Guard'}
                         </p>
                       ) : (
                         <p className="text-amber-400 text-[11px]">
@@ -487,7 +505,7 @@ export const ApiTestingPanel: React.FC<ApiTestingPanelProps> = ({ scanId, repoUr
                         Handler Code
                       </span>
                       <CodeBlock
-                        code={selectedEndpoint.handlerSnippet}
+                        code={selectedEndpoint.handlerSnippet || '// No handler snippet available'}
                         language="typescript"
                         variant="bordered"
                       />

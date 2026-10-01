@@ -8,6 +8,7 @@ import { ReportPage } from './pages/ReportPage'
 import { ProfilePage } from './pages/ProfilePage'
 import { GitHubCallbackPage } from './pages/GitHubCallbackPage'
 import { AuthModal } from './components/organisms/AuthModal'
+import { ErrorBoundary } from './components/atoms/ErrorBoundary'
 
 function AppContent() {
   const getInitialState = (): { view: 'home' | 'dashboard' | 'report' | 'github-callback' | 'profile'; scanId: string | null } => {
@@ -208,12 +209,14 @@ function AppContent() {
 
 export default function App() {
   return (
-    <ToastProvider>
-      <ConfirmProvider>
-        <AuthProvider>
-          <AppContent />
-        </AuthProvider>
-      </ConfirmProvider>
-    </ToastProvider>
+    <ErrorBoundary fallbackTitle="Application Error">
+      <ToastProvider>
+        <ConfirmProvider>
+          <AuthProvider>
+            <AppContent />
+          </AuthProvider>
+        </ConfirmProvider>
+      </ToastProvider>
+    </ErrorBoundary>
   )
 }

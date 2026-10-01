@@ -308,3 +308,33 @@ Perform the logical API security audit.`
     owaspDistribution,
   }
 }
+
+export async function auditDiscoveredEndpoints(
+  endpoints: DiscoveredEndpoint[],
+  options?: { aiAnalysis?: boolean }
+): Promise<{
+  findings: ApiVulnerabilityFinding[]
+  summary: {
+    totalFindings: number
+    critical: number
+    high: number
+    medium: number
+    low: number
+    info: number
+    categories: Record<string, number>
+  }
+}> {
+  const result = await auditEndpointsWithAi(endpoints)
+  return {
+    findings: result.findings,
+    summary: {
+      totalFindings: result.totalFindings,
+      critical: result.criticalCount,
+      high: result.highCount,
+      medium: result.mediumCount,
+      low: result.lowCount,
+      info: 0,
+      categories: result.owaspDistribution,
+    },
+  }
+}

@@ -47,13 +47,24 @@ export interface RequestlyRuleGroup {
   targetEndpointsCount: number
 }
 
-/**
- * Builds automated Requestly security test rules for a list of discovered endpoints
- */
 export function generateRequestlyRuleSuite(
   endpoints: DiscoveredEndpoint[],
-  baseUrl = 'http://localhost:3000'
+  baseUrlOrOptions: string | { baseUrl?: string; ruleGroupName?: string } = 'http://localhost:3000',
+  options?: { ruleGroupName?: string }
 ): RequestlyRuleGroup {
+  let baseUrl = 'http://localhost:3000'
+  let ruleGroupName = 'VulScan OWASP API Security Test Suite'
+
+  if (typeof baseUrlOrOptions === 'string') {
+    baseUrl = baseUrlOrOptions
+    if (options?.ruleGroupName) {
+      ruleGroupName = options.ruleGroupName
+    }
+  } else if (typeof baseUrlOrOptions === 'object' && baseUrlOrOptions !== null) {
+    if (baseUrlOrOptions.baseUrl) baseUrl = baseUrlOrOptions.baseUrl
+    if (baseUrlOrOptions.ruleGroupName) ruleGroupName = baseUrlOrOptions.ruleGroupName
+  }
+
   const rules: RequestlyRule[] = []
   let ruleId = 1
 

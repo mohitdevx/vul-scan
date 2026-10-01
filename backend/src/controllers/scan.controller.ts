@@ -1094,7 +1094,7 @@ export async function auditScanApiEndpoints(req: Request, res: Response, next: N
         aiAnalysis: true,
       })
 
-      const requestlySuite = generateRequestlyRuleSuite(discovery.endpoints, auditResults.findings, {
+      const requestlySuite = generateRequestlyRuleSuite(discovery.endpoints, {
         baseUrl: targetBaseUrl,
         ruleGroupName: `VulScan API Security - ${extractRepoName(repoUrl)}`,
       })
@@ -1149,7 +1149,7 @@ export async function exportScanRequestlyRules(req: Request, res: Response, next
     try {
       const discovery = await discoverEndpoints(tmpDir)
       const auditResults = await auditDiscoveredEndpoints(discovery.endpoints, { aiAnalysis: false })
-      const requestlySuite = generateRequestlyRuleSuite(discovery.endpoints, auditResults.findings, {
+      const requestlySuite = generateRequestlyRuleSuite(discovery.endpoints, {
         baseUrl: targetBaseUrl,
         ruleGroupName: `VulScan API Security - ${scan.repoName || 'Repo'}`,
       })

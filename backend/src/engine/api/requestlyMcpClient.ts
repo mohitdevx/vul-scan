@@ -100,3 +100,17 @@ export class RequestlyMcpClient {
     }
   }
 }
+
+export function generateRequestlyMcpBundle(suite: RequestlyRuleGroup): {
+  vscodeMcpConfig: Record<string, any>
+  mcpTools: string[]
+  instructions: string
+} {
+  const client = new RequestlyMcpClient()
+  return {
+    vscodeMcpConfig: client.getMcpConfigJson(),
+    mcpTools: ['create_rule', 'create_group', 'get_rules', 'delete_rule', 'modify_headers', 'redirect_request'],
+    instructions:
+      'Add this server configuration to .vscode/mcp.json or Claude Desktop to empower AI agents to intercept, replay, and modify API traffic in real-time.',
+  }
+}

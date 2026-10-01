@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises'
 import path from 'node:path'
 import traverseModule from '@babel/traverse'
 import { parseSourceCode } from '../parser.js'
@@ -333,5 +334,64 @@ export function discoverCodebaseEndpoints(files: { path: string; content: string
       publicCount,
       methodCounts,
     },
+  }
+}
+
+const IGNORED_API_DIRS = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  '.next',
+  '.nuxt',
+  'coverage',
+  'vendor',
+  'fixtures',
+  'test',
+  'tests',
+  '__tests__',
+])
+
+async function collectApiFiles(dir: string, baseDir: string): Promise<{ path: string; content: string }[]> {
+  const result: { path: string; content: string }[] = []
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name)
+      const relPath = path.relative(baseDir, fullPath)
+      const lowerName = entry.name.toLowerCase()
+
+      if (entry.isDirectory()) {
+        if (!IGNORED_API_DIRS.has(lowerName) && !entry.name.startsWith('.')) {
+          const subFiles = await collectApiFiles(fullPath, baseDir)
+          result.push(...subFiles)
+        }
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase()
+        if (['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'].includes(ext)) {
+          try {
+            const content = await fs.readFile(fullPath, 'utf-8')
+            result.push({ path: relPath, content })
+          } catch {
+            // Ignore unreadable files
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore directory reading errors
+  }
+  return result
+}
+
+export async function discoverEndpoints(
+  dirPath: string
+): Promise<{ endpoints: DiscoveredEndpoint[]; frameworks: string[]; totalFilesScanned: number }> {
+  const files = await collectApiFiles(dirPath, dirPath)
+  const result = discoverCodebaseEndpoints(files)
+  return {
+    endpoints: result.endpoints,
+    frameworks: result.frameworksDetected,
+    totalFilesScanned: files.length,
   }
 }

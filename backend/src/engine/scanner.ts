@@ -163,13 +163,12 @@ async function collectFiles(dir: string, baseDir: string): Promise<string[]> {
   return result
 }
 
-export async function runSecurityScan(repoUrl: string, branch?: string): Promise<ScanResult> {
-  const startTime = Date.now()
+export async function cloneRepoToTemp(repoUrl: string, branch?: string): Promise<{ tmpDir: string; activeBranch: string; cleanup: () => Promise<void> }> {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vulscan-engine-'))
   let activeBranch = branch?.trim() || ''
 
   try {
-    logger.info(`Cloning repository ${repoUrl} [branch: ${activeBranch || 'default'}] for AST analysis into ${tmpDir}`)
+    logger.info(`Cloning repository ${repoUrl} [branch: ${activeBranch || 'default'}] into ${tmpDir}`)
 
     // Shallow clone target branch with fallback to remote default branch
     try {
@@ -207,6 +206,31 @@ export async function runSecurityScan(repoUrl: string, branch?: string): Promise
     } catch {
       // Ignore
     }
+
+    const cleanup = async () => {
+      try {
+        await fs.rm(tmpDir, { recursive: true, force: true })
+      } catch (err: any) {
+        logger.warn(`Failed to clean up temp dir ${tmpDir}: ${err.message}`)
+      }
+    }
+
+    return { tmpDir, activeBranch, cleanup }
+  } catch (err) {
+    try {
+      await fs.rm(tmpDir, { recursive: true, force: true })
+    } catch {
+      // Ignore
+    }
+    throw err
+  }
+}
+
+export async function runSecurityScan(repoUrl: string, branch?: string): Promise<ScanResult> {
+  const startTime = Date.now()
+  const { tmpDir, activeBranch, cleanup } = await cloneRepoToTemp(repoUrl, branch)
+
+  try {
 
     const targetFiles = await collectFiles(tmpDir, tmpDir)
     logger.info(`Collected ${targetFiles.length} JavaScript/TypeScript files for AST analysis on branch [${activeBranch}]`)

@@ -17,6 +17,8 @@ import {
   createBatchPr,
   mergeFindingPr,
   exportScanReport,
+  auditScanApiEndpoints,
+  exportScanRequestlyRules,
 } from '../controllers/scan.controller.js'
 import { requireAuth } from '../middlewares/auth.middleware.js'
 
@@ -32,9 +34,12 @@ scanRouter.get('/stats', getDashboardStats)
 scanRouter.get('/repo-scans', getRepoScans)
 scanRouter.get('/', listScans)
 scanRouter.post('/', triggerScan)
+scanRouter.post('/api-test', auditScanApiEndpoints)
 scanRouter.delete('/', deleteAllScans)
 scanRouter.get('/:id', getScanStatus)
 scanRouter.get('/:id/report', exportScanReport)
+scanRouter.post('/:id/api-test', auditScanApiEndpoints)
+scanRouter.get('/:id/requestly-rules', exportScanRequestlyRules)
 scanRouter.post('/:id/ai-revalidate', revalidateScanWithAi)
 scanRouter.post('/:id/generate-batch-fix', generateBatchFixes)
 scanRouter.post('/:id/create-batch-pr', createBatchPr)

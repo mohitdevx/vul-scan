@@ -7,7 +7,13 @@ import type { Request, Response, NextFunction } from 'express'
 import { z } from 'zod'
 import { prisma } from '../config/db.js'
 import { logger } from '../utils/logger.js'
-import { runSecurityScan, getRemoteBranches, type ScanResult } from '../engine/index.js'
+import { runSecurityScan, getRemoteBranches, cloneRepoToTemp, type ScanResult } from '../engine/index.js'
+import {
+  discoverEndpoints,
+  auditDiscoveredEndpoints,
+  generateRequestlyRuleSuite,
+  generateRequestlyMcpBundle,
+} from '../engine/api/index.js'
 import { checkAiHealth, validateFindingWithAi } from '../services/aiValidator.service.js'
 import {
   generateAiFix,
@@ -1042,6 +1048,129 @@ export async function exportScanReport(req: Request, res: Response, next: NextFu
     res.setHeader('Content-Disposition', `inline; filename="vulscan-report-${sanitizedRepo}-${sanitizedBranch}.html"`)
     res.send(reportOutput.html)
   } catch (error) {
+    next(error)
+  }
+}
+
+export async function auditScanApiEndpoints(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const { id } = req.params
+    let repoUrl = req.body?.repoUrl
+    let branch = req.body?.branch
+    const targetBaseUrl = req.body?.targetBaseUrl || 'http://localhost:3000'
+
+    if (id) {
+      const scan = await prisma.scan.findFirst({
+        where: { id, userId },
+      })
+      if (scan) {
+        repoUrl = scan.repoUrl
+        branch = scan.branch
+      }
+    }
+
+    if (!repoUrl) {
+      res.status(400).json({ error: 'Repository URL is required for API security audit' })
+      return
+    }
+
+    logger.info(`Starting API Endpoint Discovery and Logical Security Audit for ${repoUrl} [branch: ${branch || 'default'}]`)
+
+    const { tmpDir, activeBranch, cleanup } = await cloneRepoToTemp(repoUrl, branch)
+
+    try {
+      const discovery = await discoverEndpoints(tmpDir)
+      logger.info(
+        `Discovered ${discovery.endpoints.length} API endpoints across ${discovery.totalFilesScanned} files (${discovery.frameworks.join(', ')})`
+      )
+
+      const auditResults = await auditDiscoveredEndpoints(discovery.endpoints, {
+        aiAnalysis: true,
+      })
+
+      const requestlySuite = generateRequestlyRuleSuite(discovery.endpoints, auditResults.findings, {
+        baseUrl: targetBaseUrl,
+        ruleGroupName: `VulScan API Security - ${extractRepoName(repoUrl)}`,
+      })
+
+      const mcpBundle = generateRequestlyMcpBundle(requestlySuite)
+
+      res.json({
+        success: true,
+        repoUrl,
+        branch: activeBranch,
+        totalEndpoints: discovery.endpoints.length,
+        frameworks: discovery.frameworks,
+        totalFilesScanned: discovery.totalFilesScanned,
+        endpoints: discovery.endpoints,
+        findings: auditResults.findings,
+        summary: auditResults.summary,
+        requestlySuite,
+        mcpBundle,
+      })
+    } finally {
+      await cleanup()
+    }
+  } catch (error: any) {
+    logger.error(`API testing audit failed: ${error.message}`)
+    next(error)
+  }
+}
+
+export async function exportScanRequestlyRules(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user?.id
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+
+    const { id } = req.params
+    const targetBaseUrl = (req.query.baseUrl as string) || 'http://localhost:3000'
+    const format = ((req.query.format as string) || 'rules').toLowerCase()
+
+    const scan = await prisma.scan.findFirst({
+      where: { id, userId },
+    })
+
+    if (!scan) {
+      res.status(404).json({ error: 'Scan not found' })
+      return
+    }
+
+    const { tmpDir, cleanup } = await cloneRepoToTemp(scan.repoUrl, scan.branch)
+
+    try {
+      const discovery = await discoverEndpoints(tmpDir)
+      const auditResults = await auditDiscoveredEndpoints(discovery.endpoints, { aiAnalysis: false })
+      const requestlySuite = generateRequestlyRuleSuite(discovery.endpoints, auditResults.findings, {
+        baseUrl: targetBaseUrl,
+        ruleGroupName: `VulScan API Security - ${scan.repoName || 'Repo'}`,
+      })
+
+      const sanitizedRepo = (scan.repoName || 'repo').replace(/[^a-zA-Z0-9_-]/g, '_')
+
+      if (format === 'mcp' || format === 'vscode') {
+        const mcpBundle = generateRequestlyMcpBundle(requestlySuite)
+        res.setHeader('Content-Type', 'application/json; charset=utf-8')
+        res.setHeader('Content-Disposition', `attachment; filename="requestly-mcp-config-${sanitizedRepo}.json"`)
+        res.json(mcpBundle.vscodeMcpConfig)
+        return
+      }
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.setHeader('Content-Disposition', `attachment; filename="requestly-rules-${sanitizedRepo}.json"`)
+      res.json(requestlySuite)
+    } finally {
+      await cleanup()
+    }
+  } catch (error: any) {
     next(error)
   }
 }

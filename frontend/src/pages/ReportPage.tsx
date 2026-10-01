@@ -10,12 +10,14 @@ import {
   RiAlertLine,
   RiInformationLine,
   RiDownloadLine,
+  RiServerLine,
 } from '@remixicon/react'
 import { scanApi, type ScanItem, type FindingItem } from '../services/api'
 import { useToast } from '../context/ToastContext'
 import { useConfirm } from '../context/ConfirmContext'
 import { CodeBlock } from '../components/atoms/CodeBlock'
 import { FixPrModal } from '../components/organisms/FixPrModal'
+import { ApiTestingPanel } from '../components/organisms/ApiTestingPanel'
 import { Navbar } from '../components/organisms/Navbar'
 import { Button } from '../components/atoms/Button'
 import {
@@ -696,6 +698,7 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
   const [scan, setScan] = useState<ScanItem | null>(null)
   const [allRepoScans, setAllRepoScans] = useState<ScanItem[]>([])
   const [reportMode, setReportMode] = useState<'branch' | 'full'>('branch')
+  const [activeViewMode, setActiveViewMode] = useState<'code_audit' | 'api_testing'>('code_audit')
   const [severityFilter, setSeverityFilter] = useState<'ALL' | 'HIGH_CRITICAL' | 'MEDIUM'>('ALL')
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'CONFIRMED' | 'FALSE_POSITIVES'>('ALL')
   const [isRevalidating, setIsRevalidating] = useState(false)
@@ -1028,8 +1031,42 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
 
       {/* Main Document Container with generous spacing from navbar */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-6 sm:px-12 pt-8 pb-16 space-y-8">
-        {/* Report Top Toolbar */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-border-subtle">
+        {/* Main View Mode Navigation Selector */}
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-1.5 p-1 bg-surface rounded-xl border border-border">
+            <button
+              type="button"
+              onClick={() => setActiveViewMode('code_audit')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-mono rounded-lg transition-all cursor-pointer ${
+                activeViewMode === 'code_audit'
+                  ? 'bg-accent-primary/20 text-text-primary border border-accent-primary/30 font-medium shadow-sm'
+                  : 'text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              <RiShieldCheckLine className="w-4 h-4 text-emerald-400" />
+              <span>Code Security Report</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveViewMode('api_testing')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-mono rounded-lg transition-all cursor-pointer ${
+                activeViewMode === 'api_testing'
+                  ? 'bg-accent-primary/20 text-text-primary border border-accent-primary/30 font-medium shadow-sm'
+                  : 'text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              <RiServerLine className="w-4 h-4 text-accent-primary" />
+              <span>API Testing &amp; Requestly MCP</span>
+            </button>
+          </div>
+        </div>
+
+        {activeViewMode === 'api_testing' ? (
+          <ApiTestingPanel scanId={scan.id} repoUrl={scan.repoUrl} branch={scan.branch} />
+        ) : (
+          <>
+            {/* Report Top Toolbar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-border-subtle">
           {/* Branch Switcher Underline Tabs */}
           <div className="flex items-center gap-6 text-xs font-mono">
             <button
@@ -1267,6 +1304,8 @@ export function ReportPage({ scanId, onBack, onNavigate }: ReportPageProps) {
               <CompiledMarkdownReport markdown={reportMarkdown} />
             </article>
           </div>
+        )}
+        </>
         )}
       </main>
 

@@ -86,6 +86,78 @@ export interface ScanItem {
   findings?: FindingItem[]
 }
 
+export interface DiscoveredEndpointItem {
+  id: string
+  path: string
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD' | 'ALL'
+  framework: string
+  filePath: string
+  line: number
+  hasAuthGuard: boolean
+  authGuards: string[]
+  params: Array<{
+    name: string
+    type: 'path' | 'query' | 'body' | 'header'
+    required?: boolean
+  }>
+  handlerSnippet: string
+  description?: string
+}
+
+export interface ApiFindingItem {
+  id: string
+  endpointId: string
+  path: string
+  method: string
+  category: string
+  cwe: string
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO'
+  title: string
+  description: string
+  vulnerableParameter?: string
+  exploitScenario: string
+  remediation: string
+  suggestedPatch?: string
+  requestlyRuleId?: string
+}
+
+export interface RequestlySuiteItem {
+  version: string
+  generatedAt: string
+  ruleGroupName: string
+  baseUrl: string
+  totalRules: number
+  rules: any[]
+}
+
+export interface McpBundleItem {
+  vscodeMcpConfig: any
+  mcpTools: any[]
+  instructions: string
+}
+
+export interface ApiAuditResponse {
+  success: boolean
+  repoUrl: string
+  branch: string
+  totalEndpoints: number
+  frameworks: string[]
+  totalFilesScanned: number
+  endpoints: DiscoveredEndpointItem[]
+  findings: ApiFindingItem[]
+  summary: {
+    totalFindings: number
+    critical: number
+    high: number
+    medium: number
+    low: number
+    info: number
+    categories: Record<string, number>
+  }
+  requestlySuite: RequestlySuiteItem
+  mcpBundle: McpBundleItem
+}
+
 export interface RepositoryItem {
   id: string
   name: string
@@ -287,6 +359,17 @@ export const scanApi = {
       method: 'POST',
       body: JSON.stringify({ pullNumber }),
     }),
+
+  runApiAudit: (scanId?: string, payload?: { repoUrl?: string; branch?: string; targetBaseUrl?: string }) => {
+    const url = scanId ? `/api/scan/${scanId}/api-test` : '/api/scan/api-test'
+    return request<ApiAuditResponse>(url, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    })
+  },
+
+  getRequestlyExportUrl: (scanId: string, format: 'rules' | 'mcp' = 'rules', baseUrl?: string) =>
+    `${API_BASE}/api/scan/${scanId}/requestly-rules?format=${format}${baseUrl ? `&baseUrl=${encodeURIComponent(baseUrl)}` : ''}`,
 }
 
 export const githubApi = {

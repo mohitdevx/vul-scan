@@ -17,13 +17,14 @@ jobs:
             - name: Checkout
               uses: actions/checkout@v4
 
-            - name: Nodejs-Setup
-              uses: actions/setup-node@v4
+            - name: Pnpm_Setup
+              uses: pnpm/action-setup@v4
               with: 
                 node-version: 22
+                cache: 'pnpm'
 
             - name: Install Packages 
-              run: npm ci
+              run: pnpm install --frozen-lockfile
 
             - name: Run-Test
               run: echo "testing successfull!"

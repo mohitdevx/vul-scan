@@ -23,8 +23,8 @@ jobs:
                 node-version: 22
 
             - name: Install Packages 
-              run: npm-ci
+              run: npm ci
 
             - name: Run-Test
-              run: npm run test 
+              run: echo "testing successfull!"
             

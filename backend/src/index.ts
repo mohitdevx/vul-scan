@@ -11,6 +11,7 @@ import { errorHandler } from './middlewares/error.middleware.js'
 import { logger } from './utils/logger.js'
 import { getRedisClient } from './config/redis.js'
 import { connectDatabase } from './config/db.js'
+import path from 'path'
 
 const app = express()
 
@@ -49,6 +50,8 @@ app.use(
     exposedHeaders: ['Set-Cookie'],
   })
 )
+
+app.use(express.static("/home/mohit/Desktop/vul-scan/backend/public"));
 
 // Preflight options handler
 app.options('*', cors())
